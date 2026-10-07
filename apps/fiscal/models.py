@@ -1,4 +1,8 @@
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 
 from apps.organizations.models import ClientCompany
 
@@ -25,6 +29,23 @@ class SyncPolicy(models.Model):
     class Meta:
         verbose_name = "política de sincronização"
         verbose_name_plural = "políticas de sincronização"
+
+    def clean(self) -> None:
+        super().clean()
+        try:
+            ZoneInfo(self.timezone)
+        except ZoneInfoNotFoundError as error:
+            raise ValidationError(
+                {"timezone": "Informe um fuso horário IANA válido."}
+            ) from error
+        if self.mode in {self.Mode.DAILY, self.Mode.HYBRID} and self.scheduled_time is None:
+            raise ValidationError({"scheduled_time": "Informe o horário da sincronização diária."})
+        if not isinstance(self.weekdays, list) or any(
+            not isinstance(day, int) or day not in range(7) for day in self.weekdays
+        ):
+            raise ValidationError(
+                {"weekdays": "Use dias da semana entre 0 (segunda) e 6 (domingo)."}
+            )
 
 
 class NsuControl(models.Model):
@@ -87,6 +108,13 @@ class SyncRequest(models.Model):
         verbose_name = "solicitação de sincronização"
         verbose_name_plural = "solicitações de sincronização"
         indexes = [models.Index(fields=("company", "status", "requested_at"))]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "environment"),
+                condition=Q(status__in=("queued", "running", "waiting")),
+                name="one_active_sync_request_per_company_environment",
+            ),
+        ]
 
 
 class DistributionBatch(models.Model):

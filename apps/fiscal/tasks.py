@@ -1,12 +1,9 @@
 from celery import shared_task
 
+from apps.fiscal.services.sync import enqueue_due_synchronizations
+
 
 @shared_task
 def schedule_eligible_synchronizations() -> int:
-    """Placeholder for phase-three scheduling without contacting SEFAZ.
-
-    The future implementation must query persisted policies and create
-    idempotent SyncRequest records. It must not make a fiscal request here.
-    """
-    return 0
-
+    """Queue due company policies; a separate worker use case owns SEFAZ I/O."""
+    return enqueue_due_synchronizations()

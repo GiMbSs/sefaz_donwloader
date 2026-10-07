@@ -124,6 +124,12 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    "queue-due-fiscal-synchronizations": {
+        "task": "apps.fiscal.tasks.schedule_eligible_synchronizations",
+        "schedule": 300.0,
+    },
+}
 
 LOGGING = {
     "version": 1,
