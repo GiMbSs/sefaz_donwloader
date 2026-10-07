@@ -88,3 +88,125 @@ class SyncRequest(models.Model):
         verbose_name_plural = "solicitações de sincronização"
         indexes = [models.Index(fields=("company", "status", "requested_at"))]
 
+
+class DistributionBatch(models.Model):
+    class ProcessingStatus(models.TextChoices):
+        RECEIVED = "received", "Recebido"
+        PROCESSED = "processed", "Processado"
+        INVALID = "invalid", "Inválido"
+        FAILED = "failed", "Falhou"
+
+    company = models.ForeignKey(ClientCompany, on_delete=models.PROTECT, related_name="distribution_batches")
+    nsu_control = models.ForeignKey(NsuControl, on_delete=models.PROTECT, related_name="batches")
+    sync_request = models.ForeignKey(
+        SyncRequest,
+        on_delete=models.SET_NULL,
+        related_name="batches",
+        null=True,
+        blank=True,
+    )
+    response_sha256 = models.CharField(max_length=64)
+    raw_response_path = models.CharField(max_length=255)
+    status_code = models.CharField(max_length=8)
+    reason = models.TextField(blank=True)
+    response_at = models.DateTimeField(null=True, blank=True)
+    returned_last_nsu = models.CharField(max_length=15, blank=True)
+    returned_max_nsu = models.CharField(max_length=15, blank=True)
+    document_count = models.PositiveSmallIntegerField(default=0)
+    processing_status = models.CharField(
+        max_length=16,
+        choices=ProcessingStatus,
+        default=ProcessingStatus.RECEIVED,
+    )
+    processing_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "lote de distribuição"
+        verbose_name_plural = "lotes de distribuição"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "response_sha256"),
+                name="unique_distribution_response_per_company",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("company", "created_at")),
+            models.Index(fields=("status_code", "processing_status")),
+        ]
+
+
+class FiscalDocument(models.Model):
+    class Kind(models.TextChoices):
+        SUMMARY = "summary", "Resumo"
+        COMPLETE = "complete", "Completo"
+        EVENT = "event", "Evento"
+        UNKNOWN = "unknown", "Desconhecido"
+
+    class ValidationStatus(models.TextChoices):
+        PENDING_SCHEMA = "pending_schema", "Schema pendente"
+        VALID = "valid", "Válido"
+        INVALID = "invalid", "Inválido"
+
+    company = models.ForeignKey(ClientCompany, on_delete=models.PROTECT, related_name="fiscal_documents")
+    access_key = models.CharField(max_length=44)
+    model = models.CharField(max_length=2, blank=True)
+    kind = models.CharField(max_length=16, choices=Kind, default=Kind.UNKNOWN)
+    schema_name = models.CharField(max_length=128)
+    document_root = models.CharField(max_length=80)
+    xml_sha256 = models.CharField(max_length=64)
+    xml_path = models.CharField(max_length=255)
+    validation_status = models.CharField(
+        max_length=16,
+        choices=ValidationStatus,
+        default=ValidationStatus.PENDING_SCHEMA,
+    )
+    validation_error = models.TextField(blank=True)
+    first_received_at = models.DateTimeField(auto_now_add=True)
+    last_received_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "documento fiscal"
+        verbose_name_plural = "documentos fiscais"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "access_key"),
+                name="unique_fiscal_document_per_company_access_key",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("company", "model", "kind")),
+            models.Index(fields=("validation_status",)),
+        ]
+
+
+class DistributionItem(models.Model):
+    class ProcessingStatus(models.TextChoices):
+        STORED = "stored", "Armazenado"
+        REJECTED = "rejected", "Rejeitado"
+        DUPLICATE = "duplicate", "Duplicado"
+
+    batch = models.ForeignKey(DistributionBatch, on_delete=models.CASCADE, related_name="items")
+    nsu = models.CharField(max_length=15)
+    schema_name = models.CharField(max_length=128)
+    compressed_sha256 = models.CharField(max_length=64)
+    xml_sha256 = models.CharField(max_length=64, blank=True)
+    fiscal_document = models.ForeignKey(
+        FiscalDocument,
+        on_delete=models.SET_NULL,
+        related_name="distribution_items",
+        null=True,
+        blank=True,
+    )
+    processing_status = models.CharField(max_length=16, choices=ProcessingStatus)
+    processing_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "item de distribuição"
+        verbose_name_plural = "itens de distribuição"
+        constraints = [
+            models.UniqueConstraint(fields=("batch", "nsu"), name="unique_nsu_per_distribution_batch"),
+        ]
+        indexes = [models.Index(fields=("nsu",))]

@@ -69,6 +69,7 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       REDIS_URL: redis://redis:6379/0
+      CERTIFICATE_ENCRYPTION_KEY_FILE: ${CERTIFICATE_ENCRYPTION_KEY_FILE:-/dados/certificados/.secrets/certificate-vault.key}
     command: celery -A config worker --loglevel=INFO
     depends_on:
       db:

@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "apps.accounts.apps.AccountsConfig",
+    "apps.certificates.apps.CertificatesConfig",
     "apps.organizations.apps.OrganizationsConfig",
     "apps.fiscal.apps.FiscalConfig",
     "apps.operations.apps.OperationsConfig",
@@ -102,6 +103,20 @@ LOGIN_URL = "/admin/login/"
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
+
+FISCAL_NOTES_ROOT = Path(os.environ.get("NOTES_STORAGE_ROOT", "/dados/notas"))
+CERTIFICATE_VAULT_ROOT = Path(
+    os.environ.get("CERTIFICATE_STORAGE_ROOT", "/dados/certificados")
+)
+CERTIFICATE_ENCRYPTION_KEY_FILE = Path(
+    os.environ.get(
+        "CERTIFICATE_ENCRYPTION_KEY_FILE",
+        CERTIFICATE_VAULT_ROOT / ".secrets" / "certificate-vault.key",
+    )
+)
+CERTIFICATE_MAX_UPLOAD_BYTES = int(
+    os.environ.get("CERTIFICATE_MAX_UPLOAD_BYTES", str(5 * 1024 * 1024))
+)
 
 CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
