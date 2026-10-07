@@ -1,0 +1,33 @@
+{% load static %}
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Entrar · SEFAZ Downloader</title>
+    <link rel="stylesheet" href="{% static 'operations/workstation.css' %}">
+  </head>
+  <body class="auth-page">
+    <main class="auth-panel">
+      <div class="auth-brand"><span class="brand-mark" aria-hidden="true">SF</span> SEFAZ Downloader</div>
+      <h1>Entrar na estação de trabalho</h1>
+      <p>Use sua conta autorizada pelo escritório contábil.</p>
+      <form method="post" class="form-stack">
+        {% csrf_token %}
+        {% if form.non_field_errors %}<div class="form-error">{{ form.non_field_errors }}</div>{% endif %}
+        <div class="field-group">
+          <label for="{{ form.username.id_for_label }}">E-mail</label>
+          {{ form.username }}
+          {{ form.username.errors }}
+        </div>
+        <div class="field-group">
+          <label for="{{ form.password.id_for_label }}">Senha</label>
+          {{ form.password }}
+          {{ form.password.errors }}
+        </div>
+        <input type="hidden" name="next" value="{{ next }}">
+        <button class="button button-primary" type="submit">Entrar</button>
+      </form>
+    </main>
+  </body>
+</html>

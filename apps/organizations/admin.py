@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AccountingOffice, ClientCompany
+from .models import AccountingOffice, ClientCompany, OfficeMembership
 
 
 @admin.register(AccountingOffice)
@@ -16,3 +16,10 @@ class ClientCompanyAdmin(admin.ModelAdmin):
     search_fields = ("legal_name", "tax_identifier")
     list_select_related = ("office",)
 
+
+@admin.register(OfficeMembership)
+class OfficeMembershipAdmin(admin.ModelAdmin):
+    list_display = ("user", "office", "role", "is_active")
+    list_filter = ("role", "is_active")
+    search_fields = ("user__email", "office__legal_name", "office__tax_identifier")
+    list_select_related = ("user", "office")

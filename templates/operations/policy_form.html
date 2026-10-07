@@ -1,0 +1,23 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Política de sincronização · SEFAZ Downloader{% endblock %}
+{% block page_title %}Política de sincronização{% endblock %}
+
+{% block content %}
+  <section class="form-panel">
+    <p class="lede">{{ company.legal_name }}</p>
+    <p class="muted">A política controla quando a fila pode solicitar a distribuição. Ela não permite editar o NSU.</p>
+    <form method="post" class="form-grid" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+        <div class="field-group {% if field.name == 'weekdays' %}field-wide{% endif %}">
+          {% if field.field.widget.input_type == 'checkbox' %}{{ field }}<label for="{{ field.id_for_label }}">{{ field.label }}</label>{% else %}<label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% endif %}
+          {% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}
+          {% if field.errors %}<div class="field-error">{{ field.errors }}</div>{% endif %}
+        </div>
+      {% endfor %}
+      <div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Salvar política</button></div>
+    </form>
+  </section>
+{% endblock %}

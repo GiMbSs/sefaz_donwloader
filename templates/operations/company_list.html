@@ -1,0 +1,33 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Empresas · SEFAZ Downloader{% endblock %}
+{% block page_title %}Empresas clientes{% endblock %}
+
+{% block content %}
+  <section class="intro-row">
+    <p class="lede">Cadastros, situação e acesso rápido à operação de cada empresa.</p>
+    {% if can_create_company %}<a class="button button-primary" href="{% url 'company-create' %}">Cadastrar empresa</a>{% endif %}
+  </section>
+  <form class="filter-bar" method="get">
+    <div class="filter-field"><label for="id_q">Empresa ou CNPJ</label><input id="id_q" name="q" value="{{ query }}" type="search"></div>
+    <div class="filter-field"><label for="id_status">Situação</label><select id="id_status" name="status"><option value="">Todas</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <button class="button button-secondary" type="submit">Filtrar</button>
+  </form>
+  {% if companies %}
+    <div class="table-wrap primary-table">
+      <table>
+        <thead><tr><th>Empresa</th><th>CNPJ</th><th>UF</th><th>Escritório</th><th>Situação</th><th></th></tr></thead>
+        <tbody>
+          {% for company in companies %}
+            <tr>
+              <td><strong>{{ company.legal_name }}</strong></td><td>{{ company.tax_identifier }}</td><td>{{ company.state }}</td><td>{{ company.office.legal_name }}</td><td><span class="status status-{{ company.status }}">{{ company.get_status_display }}</span></td><td><a class="table-link" href="{% url 'company-detail' company.pk %}">Abrir</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><h2>Nenhuma empresa encontrada</h2><p>Altere o filtro ou cadastre a primeira empresa do escritório.</p></div>
+  {% endif %}
+  {% if is_paginated %}<nav class="pagination" aria-label="Paginação">{% if page_obj.has_previous %}<a href="?q={{ query }}&status={{ selected_status }}&page={{ page_obj.previous_page_number }}">Anterior</a>{% endif %}<span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a href="?q={{ query }}&status={{ selected_status }}&page={{ page_obj.next_page_number }}">Próxima</a>{% endif %}</nav>{% endif %}
+{% endblock %}

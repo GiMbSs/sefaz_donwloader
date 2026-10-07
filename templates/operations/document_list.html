@@ -1,0 +1,11 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Documentos · SEFAZ Downloader{% endblock %}
+{% block page_title %}Documentos fiscais{% endblock %}
+
+{% block content %}
+  <section class="intro-row"><p class="lede">Consulte e baixe somente XMLs de empresas acessíveis ao seu perfil.</p></section>
+  <form class="filter-bar" method="get"><div class="filter-field filter-wide"><label for="id_q">Chave de acesso ou empresa</label><input id="id_q" name="q" value="{{ query }}" type="search"></div><div class="filter-field"><label for="id_model">Modelo</label><select id="id_model" name="model"><option value="">Todos</option><option value="55" {% if selected_model == '55' %}selected{% endif %}>55 · NF-e</option><option value="65" {% if selected_model == '65' %}selected{% endif %}>65 · NFC-e</option></select></div><button class="button button-secondary" type="submit">Filtrar</button></form>
+  {% if documents %}<div class="table-wrap primary-table"><table><thead><tr><th>Empresa</th><th>Chave de acesso</th><th>Modelo</th><th>Tipo</th><th>Recebido</th><th>Validação</th><th></th></tr></thead><tbody>{% for document in documents %}<tr><td><a href="{% url 'company-detail' document.company_id %}">{{ document.company.legal_name }}</a></td><td class="key-cell">{{ document.access_key }}</td><td>{{ document.model }}</td><td>{{ document.get_kind_display }}</td><td>{{ document.last_received_at|date:'d/m/Y H:i' }}</td><td><span class="status status-{{ document.validation_status }}">{{ document.get_validation_status_display }}</span></td><td><a class="table-link" href="{% url 'document-download' document.pk %}">Baixar XML</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><h2>Nenhum documento encontrado</h2><p>Os documentos aparecerão aqui depois de uma distribuição concluída e validada.</p></div>{% endif %}
+  {% if is_paginated %}<nav class="pagination" aria-label="Paginação">{% if page_obj.has_previous %}<a href="?q={{ query }}&model={{ selected_model }}&page={{ page_obj.previous_page_number }}">Anterior</a>{% endif %}<span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a href="?q={{ query }}&model={{ selected_model }}&page={{ page_obj.next_page_number }}">Próxima</a>{% endif %}</nav>{% endif %}
+{% endblock %}

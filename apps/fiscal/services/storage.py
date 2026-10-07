@@ -41,8 +41,14 @@ class FiscalStorage:
         issued_month: int = 0,
         payload: bytes,
     ) -> str:
-        if not access_key.isascii() or not access_key.isalnum() or len(access_key) != 44:
-            raise FiscalStorageError("Access key must have 44 uppercase alphanumeric characters.")
+        if (
+            not access_key.isascii()
+            or not access_key.isalnum()
+            or len(access_key) != 44
+        ):
+            raise FiscalStorageError(
+                "Access key must have 44 uppercase alphanumeric characters."
+            )
         if not model.isdecimal() or len(model) != 2:
             raise FiscalStorageError("Document model must have two digits.")
         if not 1 <= issued_month <= 12:
@@ -54,7 +60,9 @@ class FiscalStorage:
         elif kind in {"event", "unknown"} and discriminator:
             filename = f"{access_key}.{kind}.{discriminator}.xml"
         else:
-            raise FiscalStorageError("Document kind requires a safe filename discriminator.")
+            raise FiscalStorageError(
+                "Document kind requires a safe filename discriminator."
+            )
         relative_path = (
             Path(str(company_id))
             / f"{issued_year:04d}"
@@ -73,12 +81,25 @@ class FiscalStorage:
         except FileNotFoundError:
             return
         except OSError as error:
-            raise FiscalStorageError("Unable to remove incomplete fiscal storage data.") from error
+            raise FiscalStorageError(
+                "Unable to remove incomplete fiscal storage data."
+            ) from error
+
+    def path_for_read(self, relative_path: str) -> Path:
+        target = self._safe_target(Path(relative_path))
+        if not target.is_file():
+            raise FiscalStorageError(
+                "Fiscal XML is not available in the configured storage."
+            )
+        return target
 
     def _write(self, relative_path: Path, payload: bytes) -> None:
         target = self._safe_target(relative_path)
         target.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(prefix=".download-", dir=target.parent)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".download-",
+            dir=target.parent,
+        )
         try:
             with os.fdopen(descriptor, "wb") as temporary:
                 os.fchmod(temporary.fileno(), 0o640)

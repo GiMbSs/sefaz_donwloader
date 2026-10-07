@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-07T00:00:00-03:00",
+  "title": "Design System: SEFAZ Downloader",
+  "extensions": {
+    "colorMeta": {
+      "navy": {
+        "role": "neutral",
+        "displayName": "Marinho de estação",
+        "canonical": "#132841",
+        "tonalRamp": ["#102033", "#132841", "#1c3a59", "#31536f", "#55758e", "#819ba9", "#b8c9d1", "#e6edf0"]
+      },
+      "blue": {
+        "role": "primary",
+        "displayName": "Azul de operação",
+        "canonical": "#1b5a8e",
+        "tonalRamp": ["#102d49", "#174b73", "#1b5a8e", "#35759f", "#5a96bd", "#8eb8d2", "#c4dce9", "#edf6fa"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Papel de trabalho",
+        "canonical": "#f4f1e9",
+        "tonalRamp": ["#383731", "#646158", "#8d8a7e", "#b3b0a6", "#d1cec5", "#e4e1d9", "#f4f1e9", "#fffdf8"]
+      }
+    },
+    "shadows": [
+      {
+        "name": "surface-lift",
+        "value": "0 12px 30px rgb(20 35 58 / 8%)",
+        "purpose": "Separar painéis principais do fundo de papel."
+      }
+    ],
+    "breakpoints": [
+      {"name": "compact-rail", "value": "860px"},
+      {"name": "phone", "value": "600px"}
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ação decisiva de salvar ou enfileirar.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Incluir na fila</button>",
+      "css": ".ds-btn-primary{min-height:2.55rem;padding:.55rem .85rem;border:0;border-radius:.5rem;background:#1b5a8e;color:#fff;font:700 .9375rem system-ui}.ds-btn-primary:hover{background:#245177}.ds-btn-primary:focus-visible{outline:3px solid #e8a018;outline-offset:3px}"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status",
+      "description": "Estado curto acompanhado de rótulo textual.",
+      "html": "<span class=\"ds-status-waiting\">Aguardando SEFAZ</span>",
+      "css": ".ds-status-waiting{display:inline-flex;padding:.18rem .5rem;border-radius:999px;background:#fff1d4;color:#875e13;font:750 .73rem system-ui;line-height:1.3}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A mesa de controle da contabilidade",
+    "overview": "Uma estação operacional com navegação marinho, área de trabalho clara e dados fiscais como principal fonte de verdade.",
+    "keyCharacteristics": ["Navegação lateral estável", "Tabelas como núcleo", "Cor semântica reservada", "Ações com contexto"],
+    "rules": [
+      {
+        "name": "Accent Has a Job",
+        "body": "Azul aparece apenas em ação, link e seleção.",
+        "section": "colors"
+      }
+    ],
+    "dos": ["Manter dados fiscais em tabelas e blocos de estado.", "Exibir origem e situação da solicitação."],
+    "donts": ["Não editar NSU em formulários.", "Não usar cor como única evidência de estado."]
+  }
+}

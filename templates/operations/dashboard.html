@@ -1,0 +1,68 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Operação · SEFAZ Downloader{% endblock %}
+{% block page_title %}Operação fiscal{% endblock %}
+
+{% block content %}
+  <section class="intro-row">
+    <div>
+      <p class="lede">Acompanhe pendências antes de solicitar novos documentos.</p>
+      <p class="muted">O NSU é controlado por empresa e ambiente; a fila nunca recebe um cursor informado manualmente.</p>
+    </div>
+    <a class="button button-secondary" href="{% url 'company-list' %}">Ver empresas</a>
+  </section>
+
+  <section class="ledger-strip" aria-label="Resumo operacional">
+    <div><strong>{{ active_company_count }}</strong><span>empresas ativas</span></div>
+    <div><strong>{{ blocked_controls|length }}</strong><span>consultas em espera</span></div>
+    <div><strong>{{ expiring_certificates|length }}</strong><span>certificados a vencer</span></div>
+    <div><strong>{{ company_count }}</strong><span>empresas visíveis</span></div>
+  </section>
+
+  <div class="workspace-grid">
+    <section class="panel panel-wide">
+      <div class="section-heading">
+        <div>
+          <h2>Fila recente</h2>
+          <p>Solicitações recebidas para os escritórios sob sua responsabilidade.</p>
+        </div>
+      </div>
+      {% if recent_requests %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Empresa</th><th>Ambiente</th><th>Origem</th><th>Situação</th><th>Solicitada</th></tr></thead>
+            <tbody>
+              {% for item in recent_requests %}
+                <tr>
+                  <td><a href="{% url 'company-detail' item.company_id %}">{{ item.company.legal_name }}</a></td>
+                  <td>{{ item.get_environment_display }}</td>
+                  <td>{{ item.get_trigger_display }}</td>
+                  <td><span class="status status-{{ item.status }}">{{ item.get_status_display }}</span></td>
+                  <td>{{ item.requested_at|date:'d/m/Y H:i' }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state"><h3>Nenhuma solicitação ainda</h3><p>Cadastre uma empresa e defina a política de sincronização para iniciar a operação.</p></div>
+      {% endif %}
+    </section>
+
+    <aside class="panel panel-side">
+      <div class="section-heading"><div><h2>Atenção</h2><p>Itens que exigem acompanhamento.</p></div></div>
+      {% if blocked_controls or expiring_certificates %}
+        <ul class="attention-list">
+          {% for control in blocked_controls %}
+            <li><strong>{{ control.company.legal_name }}</strong><span>{{ control.get_environment_display }} liberado em {{ control.next_allowed_at|date:'d/m H:i' }}</span></li>
+          {% endfor %}
+          {% for certificate in expiring_certificates %}
+            <li><strong>{{ certificate.company.legal_name }}</strong><span>Certificado vence em {{ certificate.not_valid_after|date:'d/m/Y' }}</span></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="quiet">Não há bloqueios nem certificados com vencimento nos próximos 30 dias.</p>
+      {% endif %}
+    </aside>
+  </div>
+{% endblock %}

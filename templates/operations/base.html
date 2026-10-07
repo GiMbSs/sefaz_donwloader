@@ -1,0 +1,53 @@
+{% load static %}
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>{% block title %}SEFAZ Downloader{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'operations/workstation.css' %}">
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+    <div class="app-shell">
+      <aside class="rail" aria-label="Navegação principal">
+        <a class="brand" href="{% url 'dashboard' %}">
+          <span class="brand-mark" aria-hidden="true">SF</span>
+          <span>SEFAZ<br>Downloader</span>
+        </a>
+        <nav class="primary-nav">
+          <a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Operação</a>
+          <a href="{% url 'company-list' %}" {% if request.resolver_match.url_name|slice:':7' == 'company' %}aria-current="page"{% endif %}>Empresas</a>
+          <a href="{% url 'document-list' %}" {% if request.resolver_match.url_name|slice:':8' == 'document' %}aria-current="page"{% endif %}>Documentos</a>
+        </nav>
+        <div class="rail-foot">
+          {% if request.user.is_staff %}<a href="{% url 'admin:index' %}">Administração técnica</a>{% endif %}
+          <form action="{% url 'logout' %}" method="post">
+            {% csrf_token %}
+            <button class="rail-link" type="submit">Encerrar sessão</button>
+          </form>
+        </div>
+      </aside>
+      <main id="conteudo" class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>{% block page_title %}Operação fiscal{% endblock %}</h1>
+          </div>
+          <div class="account-summary">
+            <span>{{ request.user.get_full_name }}</span>
+            <small>{{ request.user.email }}</small>
+          </div>
+        </header>
+        {% if messages %}
+          <div class="messages" aria-live="polite">
+            {% for message in messages %}
+              <div class="notice notice-{{ message.tags|default:'info' }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </body>
+</html>
