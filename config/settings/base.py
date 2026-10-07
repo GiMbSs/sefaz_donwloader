@@ -118,6 +118,21 @@ CERTIFICATE_ENCRYPTION_KEY_FILE = Path(
 CERTIFICATE_MAX_UPLOAD_BYTES = int(
     os.environ.get("CERTIFICATE_MAX_UPLOAD_BYTES", str(5 * 1024 * 1024))
 )
+CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE = Path(
+    os.environ.get(
+        "CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE",
+        CERTIFICATE_VAULT_ROOT / ".secrets" / "certificate-upload-private.key",
+    )
+)
+CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE = Path(
+    os.environ.get(
+        "CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE",
+        "/dados/certificate-public/certificate-upload-public.key",
+    )
+)
+CERTIFICATE_UPLOAD_STAGING_SECONDS = int(
+    os.environ.get("CERTIFICATE_UPLOAD_STAGING_SECONDS", "900")
+)
 
 CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
@@ -128,6 +143,10 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULE = {
     "queue-due-fiscal-synchronizations": {
         "task": "apps.fiscal.tasks.schedule_eligible_synchronizations",
+        "schedule": 300.0,
+    },
+    "expire-staged-certificate-uploads": {
+        "task": "apps.certificates.tasks.expire_staged_certificate_uploads_task",
         "schedule": 300.0,
     },
 }

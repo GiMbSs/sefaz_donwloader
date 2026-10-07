@@ -34,6 +34,11 @@ urlpatterns = [
         name="company-policy",
     ),
     path(
+        "empresas/<int:company_id>/certificado/",
+        views.CompanyCertificateUploadView.as_view(),
+        name="company-certificate-upload",
+    ),
+    path(
         "empresas/<int:company_id>/sincronizar/",
         views.ManualSyncRequestView.as_view(),
         name="company-sync",

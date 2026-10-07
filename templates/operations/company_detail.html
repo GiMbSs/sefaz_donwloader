@@ -10,7 +10,7 @@
       <p class="muted">Escritório responsável: {{ company.office.legal_name }}</p>
     </div>
     <div class="action-row">
-      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a>{% endif %}
+      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a><a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a>{% endif %}
     </div>
   </section>
 
@@ -23,7 +23,7 @@
     </article>
     <article class="state-block">
       <span class="state-label">Certificado A1</span>
-      {% if active_certificate %}<strong>Válido até {{ active_certificate.not_valid_after|date:'d/m/Y' }}</strong><small>{{ active_certificate.subject }}</small>{% else %}<strong class="critical-text">Não cadastrado</strong><small>O envio seguro será habilitado no fluxo de certificados.</small>{% endif %}
+      {% if active_certificate %}<strong>Válido até {{ active_certificate.not_valid_after|date:'d/m/Y' }}</strong><small>{{ active_certificate.subject }}</small>{% elif latest_certificate_upload %}<strong><span class="status status-{{ latest_certificate_upload.status }}">{{ latest_certificate_upload.get_status_display }}</span></strong><small>{{ latest_certificate_upload.error_message|default:'Certificado recebido para processamento seguro.' }}</small>{% else %}<strong class="critical-text">Não cadastrado</strong><small>{% if can_manage %}Envie o certificado A1 para habilitar a operação fiscal.{% else %}Solicite o cadastro do certificado a uma pessoa administradora.{% endif %}</small>{% endif %}
     </article>
   </section>
 
@@ -44,7 +44,7 @@
         <div class="table-wrap"><table><thead><tr><th>Ambiente</th><th>Último NSU</th><th>Máximo informado</th><th>Situação</th></tr></thead><tbody>{% for control in nsu_controls %}<tr><td>{{ control.get_environment_display }}</td><td>{{ control.last_nsu|default:'—' }}</td><td>{{ control.maximum_nsu|default:'—' }}</td><td>{% if control.next_allowed_at %}<span class="status status-waiting">Liberado {{ control.next_allowed_at|date:'d/m H:i' }}</span>{% else %}<span class="status status-succeeded">Disponível</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
       {% else %}<p class="quiet">O controle será criado na primeira solicitação para cada ambiente.</p>{% endif %}
     </section>
-    <aside class="panel panel-side"><div class="section-heading"><div><h2>Próximo passo</h2></div></div>{% if not active_certificate %}<p class="quiet">Cadastre o certificado A1 desta empresa antes de colocar a integração SEFAZ em produção.</p>{% elif policy and not policy.is_active %}<p class="quiet">Ative a política para permitir novas solicitações.</p>{% else %}<p class="quiet">Acompanhe a fila abaixo; cada retorno arquivado mantém o lote e o XML original.</p>{% endif %}</aside>
+    <aside class="panel panel-side"><div class="section-heading"><div><h2>Próximo passo</h2></div></div>{% if not active_certificate and can_manage %}<p class="quiet">Envie o certificado A1. O navegador o encaminhará cifrado para processamento exclusivo no worker.</p>{% elif not active_certificate %}<p class="quiet">Solicite a uma pessoa administradora o cadastro do certificado A1 desta empresa.</p>{% elif policy and not policy.is_active %}<p class="quiet">Ative a política para permitir novas solicitações.</p>{% else %}<p class="quiet">Acompanhe a fila abaixo; cada retorno arquivado mantém o lote e o XML original.</p>{% endif %}</aside>
   </div>
 
   <section class="panel panel-full"><div class="section-heading"><div><h2>Solicitações recentes</h2><p>Histórico operacional da empresa.</p></div></div>{% if sync_requests %}<div class="table-wrap"><table><thead><tr><th>Solicitada</th><th>Ambiente</th><th>Origem</th><th>Situação</th><th>Detalhe</th></tr></thead><tbody>{% for item in sync_requests %}<tr><td>{{ item.requested_at|date:'d/m/Y H:i' }}</td><td>{{ item.get_environment_display }}</td><td>{{ item.get_trigger_display }}</td><td><span class="status status-{{ item.status }}">{{ item.get_status_display }}</span></td><td>{{ item.result_detail|default:'—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">Nenhuma solicitação foi criada para esta empresa.</p>{% endif %}</section>

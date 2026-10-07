@@ -17,6 +17,10 @@ from django.views import View
 from django.views.generic import ListView, TemplateView
 
 from apps.certificates.models import DigitalCertificate
+from apps.certificates.services.uploads import (
+    CertificateUploadError,
+    stage_certificate_upload,
+)
 from apps.fiscal.models import FiscalDocument, NsuControl, SyncPolicy, SyncRequest
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.fiscal.services.sync import (
@@ -24,6 +28,7 @@ from apps.fiscal.services.sync import (
     request_synchronization,
 )
 from apps.operations.forms import (
+    CertificateUploadForm,
     ClientCompanyForm,
     ManualSyncRequestForm,
     SyncPolicyForm,
@@ -136,6 +141,9 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
                 "policy": getattr(company, "sync_policy", None),
                 "active_certificate": company.digital_certificates.filter(
                     status=DigitalCertificate.Status.ACTIVE
+                ).first(),
+                "latest_certificate_upload": company.certificate_uploads.order_by(
+                    "-created_at"
                 ).first(),
                 "nsu_controls": company.nsu_controls.order_by("environment", "service"),
                 "sync_requests": company.sync_requests.select_related(
@@ -290,6 +298,66 @@ class CompanyPolicyUpdateView(CompanyAccessMixin, View):
             )
         messages.success(request, "Política de sincronização atualizada.")
         return redirect("company-detail", company_id=policy.company_id)
+
+
+class CompanyCertificateUploadView(CompanyAccessMixin, View):
+    template_name = "operations/certificate_upload.html"
+    manage_required = True
+
+    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+        company = self.get_company()
+        return render(
+            request,
+            self.template_name,
+            {
+                "company": company,
+                "form": CertificateUploadForm(),
+                "latest_upload": company.certificate_uploads.order_by(
+                    "-created_at"
+                ).first(),
+            },
+        )
+
+    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+        company = self.get_company()
+        form = CertificateUploadForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return render(
+                request,
+                self.template_name,
+                {
+                    "company": company,
+                    "form": form,
+                    "latest_upload": company.certificate_uploads.order_by(
+                        "-created_at"
+                    ).first(),
+                },
+                status=400,
+            )
+        certificate_file = form.cleaned_data["certificate_file"]
+        try:
+            result = stage_certificate_upload(
+                company_id=company.pk,
+                filename=certificate_file.name,
+                payload=certificate_file.read(),
+                password=form.cleaned_data["password"],
+                uploaded_by=request.user,
+            )
+        except CertificateUploadError as error:
+            messages.error(request, str(error))
+        else:
+            if result.created:
+                messages.success(
+                    request,
+                    "Certificado recebido para processamento seguro pelo worker.",
+                )
+            else:
+                messages.info(
+                    request,
+                    "Já existe um envio de certificado em processamento para esta "
+                    "empresa.",
+                )
+        return redirect("company-detail", company_id=company.pk)
 
 
 class ManualSyncRequestView(CompanyAccessMixin, View):

@@ -134,16 +134,19 @@ MVP; nenhuma ciência ou confirmação é enviada automaticamente.
 ## 6. Segurança de certificados e segredos
 
 Uma senha de PFX guardada somente como hash não permite automação, pois hash não
-é recuperável para abrir o certificado. Para o modo automático, o sistema deve:
+é recuperável para abrir o certificado. Para manter o banco sem senha reversível
+e ainda permitir a assinatura automática, o sistema deve:
 
-1. Cifrar o arquivo PFX e sua senha com criptografia autenticada.
-2. Manter a chave mestra fora do banco, do código e da imagem Docker, injetada
+1. Persistir no banco somente `password_hash`, produzido pelos hashers do Django.
+2. Cifrar o arquivo PFX e a credencial recuperável com criptografia autenticada
+   em arquivos privados de `clientes/<id-da-empresa>/certificados/`.
+3. Manter a chave mestra fora do banco, do código e da imagem Docker, injetada
    como segredo protegido no host.
-3. Montar certificados somente para o worker; nunca em `MEDIA_URL`, logs,
+4. Montar certificados somente para o worker; nunca em `MEDIA_URL`, logs,
    backups de interface ou container web.
-4. Exibir somente metadados seguros: titular, serial, emissor, CNPJ-base e
+5. Exibir somente metadados seguros: titular, serial, emissor, CNPJ-base e
    vencimento.
-5. Auditar inclusão, substituição, teste, expiração e remoção, sem registrar a
+6. Auditar inclusão, substituição, teste, expiração e remoção, sem registrar a
    senha, o conteúdo do PFX ou valores de segredo.
 
 Uploads passam por limite de tamanho, extensão esperada, parsing seguro e
@@ -164,6 +167,8 @@ Agendador -> fila Redis -> worker fiscal -> Ambiente Nacional / autorizadores
 Serviços Docker:
 
 - `web`: Django, sessões, formulários, consultas e comandos assíncronos.
+- `migrations`: cria chaves privadas quando necessário e aplica migrations com
+  acesso ao cofre, antes dos serviços de aplicação.
 - `worker`: cliente fiscal, XML, armazenamento e reprocessamento.
 - `scheduler`: instância única que identifica empresas elegíveis; não executa
   em processos web.
@@ -190,7 +195,8 @@ entrada do usuário.
 
 - `EscritorioContabil`: tenant inicial da instalação.
 - `EmpresaCliente`: CNPJ, matriz/filial, UF, ambiente, estado e política.
-- `CertificadoDigital`: metadados e referências seguras ao PFX/senha cifrados.
+- `CertificadoDigital`: metadados, `password_hash` e referências aos arquivos
+  privados e cifrados de PFX e credencial.
 - `PoliticaSincronizacao`: agenda, modo, estado e janelas permitidas.
 - `ControleNSU`: cursor, `maxNSU`, bloqueios e última resposta.
 - `LoteDistribuicao`: requisição, resposta, hashes, NSUs, versão de schema e

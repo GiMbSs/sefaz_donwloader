@@ -34,7 +34,8 @@ baixados. A Paraíba é o mercado inicial, com expansão planejada para outras U
 - Python 3.13, Django 6, PostgreSQL, Redis e Celery em containers Docker.
 - NF-e e NFC-e serão baixadas por empresa, diariamente ou sob solicitação,
   obedecendo o controle de NSU e os intervalos impostos pela SEFAZ.
-- Certificados A1/PFX e suas senhas precisam permanecer privados e criptografados.
+- Certificados A1/PFX e a credencial recuperável ficam cifrados em arquivos
+  privados por empresa; o banco retém somente o hash da senha.
 - XMLs ficam em volume montado fora do container, nunca no media público do Django.
 - A interface principal é uma estação de trabalho, não o Django Admin nem um
   navegador genérico de arquivos.

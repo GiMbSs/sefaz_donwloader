@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import pkcs12
 from django.conf import settings
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.utils import timezone
 
@@ -61,50 +62,149 @@ class CertificateVault:
         try:
             encoded = self.key_file.read_bytes().strip()
         except OSError as error:
-            raise CertificateVaultError("Certificate vault key is unavailable.") from error
+            raise CertificateVaultError(
+                "Certificate vault key is unavailable."
+            ) from error
         try:
             key = base64.urlsafe_b64decode(encoded)
         except (ValueError, binascii.Error) as error:
-            raise CertificateVaultError("Certificate vault key has an invalid encoding.") from error
+            raise CertificateVaultError(
+                "Certificate vault key has an invalid encoding."
+            ) from error
         if len(key) != 32:
-            raise CertificateVaultError("Certificate vault key must decode to 32 bytes.")
+            raise CertificateVaultError(
+                "Certificate vault key must decode to 32 bytes."
+            )
         return key
 
     @staticmethod
-    def _associated_data(storage_id: object) -> bytes:
+    def _associated_data(storage_id: object, purpose: str = "pfx") -> bytes:
+        return f"sefaz-downloader:certificate:{storage_id}:{purpose}".encode("ascii")
+
+    @staticmethod
+    def _legacy_associated_data(storage_id: object) -> bytes:
         return f"sefaz-downloader:certificate:{storage_id}".encode("ascii")
 
-    def seal(self, plaintext: bytes, storage_id: object) -> bytes:
+    def seal(
+        self,
+        plaintext: bytes,
+        storage_id: object,
+        *,
+        purpose: str = "pfx",
+    ) -> bytes:
         nonce = os.urandom(self._NONCE_SIZE)
         ciphertext = AESGCM(self._key()).encrypt(
             nonce,
             plaintext,
-            self._associated_data(storage_id),
+            self._associated_data(storage_id, purpose),
         )
         return self._MAGIC + nonce + ciphertext
 
-    def unseal(self, payload: bytes, storage_id: object) -> bytes:
-        if not payload.startswith(self._MAGIC) or len(payload) <= len(self._MAGIC) + self._NONCE_SIZE:
-            raise CertificateVaultError("Certificate vault payload has an invalid format.")
+    def unseal(
+        self,
+        payload: bytes,
+        storage_id: object,
+        *,
+        purpose: str = "pfx",
+    ) -> bytes:
+        if not payload.startswith(self._MAGIC) or len(payload) <= (
+            len(self._MAGIC) + self._NONCE_SIZE
+        ):
+            raise CertificateVaultError(
+                "Certificate vault payload has an invalid format."
+            )
         nonce_start = len(self._MAGIC)
         nonce_end = nonce_start + self._NONCE_SIZE
         try:
             return AESGCM(self._key()).decrypt(
                 payload[nonce_start:nonce_end],
                 payload[nonce_end:],
-                self._associated_data(storage_id),
+                self._associated_data(storage_id, purpose),
             )
-        except Exception as error:  # cryptography deliberately has few public AEAD errors
-            raise CertificateVaultError("Certificate vault payload cannot be decrypted.") from error
+        except Exception as error:  # cryptography has few public AEAD error types
+            raise CertificateVaultError(
+                "Certificate vault payload cannot be decrypted."
+            ) from error
 
-    def _path_for(self, storage_id: object) -> Path:
-        return self.root / "pfx" / f"{storage_id}.bin"
+    def unseal_legacy(self, payload: bytes, storage_id: object) -> bytes:
+        """Read version-1 vault content while migrating it out of the database."""
+        if not payload.startswith(self._MAGIC) or len(payload) <= (
+            len(self._MAGIC) + self._NONCE_SIZE
+        ):
+            raise CertificateVaultError("Legacy certificate vault payload is invalid.")
+        nonce_start = len(self._MAGIC)
+        nonce_end = nonce_start + self._NONCE_SIZE
+        try:
+            return AESGCM(self._key()).decrypt(
+                payload[nonce_start:nonce_end],
+                payload[nonce_end:],
+                self._legacy_associated_data(storage_id),
+            )
+        except Exception as error:
+            raise CertificateVaultError(
+                "Legacy certificate vault payload cannot be decrypted."
+            ) from error
 
-    def store(self, storage_id: object, payload: bytes) -> str:
-        target = self._path_for(storage_id)
+    def _client_directory(self, company_id: int) -> Path:
+        return self.root / "clientes" / str(company_id) / "certificados"
+
+    def _path_for(
+        self,
+        *,
+        company_id: int,
+        storage_id: object,
+        purpose: str,
+    ) -> Path:
+        suffix = "pfx.enc" if purpose == "pfx" else "password.enc"
+        return self._client_directory(company_id) / f"{storage_id}.{suffix}"
+
+    def store_certificate(
+        self,
+        *,
+        company_id: int,
+        storage_id: object,
+        payload: bytes,
+    ) -> str:
+        return self._store(
+            company_id=company_id,
+            storage_id=storage_id,
+            payload=payload,
+            purpose="pfx",
+        )
+
+    def store_password(
+        self,
+        *,
+        company_id: int,
+        storage_id: object,
+        password: str,
+    ) -> str:
+        return self._store(
+            company_id=company_id,
+            storage_id=storage_id,
+            payload=password.encode("utf-8"),
+            purpose="password",
+        )
+
+    def _store(
+        self,
+        *,
+        company_id: int,
+        storage_id: object,
+        payload: bytes,
+        purpose: str,
+    ) -> str:
+        target = self._path_for(
+            company_id=company_id,
+            storage_id=storage_id,
+            purpose=purpose,
+        )
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        encrypted = self.seal(payload, storage_id)
-        descriptor, temporary_name = tempfile.mkstemp(prefix=".upload-", dir=target.parent)
+        encrypted = self.seal(payload, storage_id, purpose=purpose)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".upload-",
+            dir=target.parent,
+        )
         try:
             with os.fdopen(descriptor, "wb") as temporary:
                 os.fchmod(temporary.fileno(), 0o600)
@@ -122,33 +222,83 @@ class CertificateVault:
         return str(target.relative_to(self.root))
 
     def load(self, certificate: DigitalCertificate) -> bytes:
-        relative_path = Path(certificate.encrypted_path)
-        target = (self.root / relative_path).resolve()
-        if self.root.resolve() not in target.parents:
-            raise CertificateVaultError("Certificate path escaped the private vault.")
-        try:
-            encrypted = target.read_bytes()
-        except OSError as error:
-            raise CertificateVaultError("Encrypted certificate material is unavailable.") from error
-        return self.unseal(encrypted, certificate.storage_id)
+        encrypted = self._read_path(
+            certificate.encrypted_path,
+            message="Encrypted certificate material is unavailable.",
+        )
+        return self.unseal(encrypted, certificate.storage_id, purpose="pfx")
 
-    def remove(self, storage_id: object) -> None:
+    def unseal_password(self, certificate: DigitalCertificate) -> str:
+        encrypted = self._read_path(
+            certificate.encrypted_password_path,
+            message="Encrypted certificate password is unavailable.",
+        )
         try:
-            self._path_for(storage_id).unlink()
+            password = self.unseal(
+                encrypted,
+                certificate.storage_id,
+                purpose="password",
+            ).decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise CertificateVaultError(
+                "Encrypted certificate password is invalid."
+            ) from error
+        try:
+            matches = check_password(password, certificate.password_hash)
+        except ValueError as error:
+            raise CertificateVaultError(
+                "Certificate password verification is unavailable."
+            ) from error
+        if not matches:
+            raise CertificateVaultError("Certificate password verification failed.")
+        return password
+
+    def load_legacy(self, encrypted_path: str, storage_id: object) -> bytes:
+        encrypted = self._read_path(
+            encrypted_path,
+            message="Legacy encrypted certificate material is unavailable.",
+        )
+        return self.unseal_legacy(encrypted, storage_id)
+
+    def unseal_legacy_password(self, sealed_password: str, storage_id: object) -> str:
+        try:
+            payload = base64.urlsafe_b64decode(sealed_password.encode("ascii"))
+            return self.unseal_legacy(payload, storage_id).decode("utf-8")
+        except (UnicodeDecodeError, ValueError, binascii.Error) as error:
+            raise CertificateVaultError(
+                "Legacy encrypted certificate password is unavailable."
+            ) from error
+
+    def remove(self, certificate: DigitalCertificate) -> None:
+        self._remove_path(certificate.encrypted_path)
+        self._remove_path(certificate.encrypted_password_path)
+
+    def remove_legacy(self, encrypted_path: str) -> None:
+        self._remove_path(encrypted_path)
+
+    def _read_path(self, relative_path: str, *, message: str) -> bytes:
+        target = self._resolve_path(relative_path)
+        try:
+            return target.read_bytes()
+        except OSError as error:
+            raise CertificateVaultError(message) from error
+
+    def _remove_path(self, relative_path: str) -> None:
+        target = self._resolve_path(relative_path)
+        try:
+            target.unlink()
         except FileNotFoundError:
             return
         except OSError as error:
-            raise CertificateVaultError("Encrypted certificate material cannot be removed.") from error
+            raise CertificateVaultError(
+                "Encrypted certificate material cannot be removed."
+            ) from error
 
-    def seal_password(self, password: str, storage_id: object) -> str:
-        return base64.urlsafe_b64encode(self.seal(password.encode("utf-8"), storage_id)).decode("ascii")
-
-    def unseal_password(self, certificate: DigitalCertificate) -> str:
-        try:
-            payload = base64.urlsafe_b64decode(certificate.sealed_password.encode("ascii"))
-            return self.unseal(payload, certificate.storage_id).decode("utf-8")
-        except (UnicodeDecodeError, ValueError, binascii.Error) as error:
-            raise CertificateVaultError("Encrypted certificate password is unavailable.") from error
+    def _resolve_path(self, relative_path: str) -> Path:
+        target = (self.root / Path(relative_path)).resolve()
+        if self.root.resolve() not in target.parents:
+            raise CertificateVaultError("Certificate path escaped the private vault.")
+        return target
 
 
 def inspect_pkcs12(payload: bytes, password: str) -> CertificateMetadata:
@@ -159,9 +309,13 @@ def inspect_pkcs12(payload: bytes, password: str) -> CertificateMetadata:
             password.encode("utf-8"),
         )
     except (TypeError, ValueError) as error:
-        raise CertificateValidationError("The PFX file or its password is invalid.") from error
+        raise CertificateValidationError(
+            "The PFX file or its password is invalid."
+        ) from error
     if private_key is None or certificate is None:
-        raise CertificateValidationError("The PFX must contain a private key and certificate.")
+        raise CertificateValidationError(
+            "The PFX must contain a private key and certificate."
+        )
 
     return CertificateMetadata(
         serial_number=format(certificate.serial_number, "X"),
@@ -194,7 +348,9 @@ def register_certificate(
     if not payload:
         raise CertificateValidationError("The certificate file is empty.")
     if len(payload) > settings.CERTIFICATE_MAX_UPLOAD_BYTES:
-        raise CertificateValidationError("The certificate file exceeds the allowed size.")
+        raise CertificateValidationError(
+            "The certificate file exceeds the allowed size."
+        )
     if not password:
         raise CertificateValidationError("The certificate password is required.")
 
@@ -207,7 +363,8 @@ def register_certificate(
     certificate = DigitalCertificate(
         company=company,
         encrypted_path="pending",
-        sealed_password="pending",
+        encrypted_password_path="pending",
+        password_hash="pending",
         filename=Path(filename).name[:255],
         content_sha256=hashlib.sha256(payload).hexdigest(),
         certificate_fingerprint_sha256=metadata.fingerprint_sha256,
@@ -219,8 +376,17 @@ def register_certificate(
         uploaded_by=uploaded_by,
     )
     try:
-        certificate.encrypted_path = vault.store(certificate.storage_id, payload)
-        certificate.sealed_password = vault.seal_password(password, certificate.storage_id)
+        certificate.encrypted_path = vault.store_certificate(
+            company_id=company.pk,
+            storage_id=certificate.storage_id,
+            payload=payload,
+        )
+        certificate.encrypted_password_path = vault.store_password(
+            company_id=company.pk,
+            storage_id=certificate.storage_id,
+            password=password,
+        )
+        certificate.password_hash = make_password(password)
         with transaction.atomic():
             active_certificates = DigitalCertificate.objects.select_for_update().filter(
                 company=company,
@@ -230,9 +396,18 @@ def register_certificate(
                 status=DigitalCertificate.Status.REPLACED,
                 replaced_at=now,
             )
-            certificate.full_clean(exclude={"encrypted_path", "sealed_password"})
+            certificate.full_clean(
+                exclude={
+                    "encrypted_path",
+                    "encrypted_password_path",
+                    "password_hash",
+                }
+            )
             certificate.save()
     except Exception:
-        vault.remove(certificate.storage_id)
+        try:
+            vault.remove(certificate)
+        except CertificateVaultError:
+            pass
         raise
     return certificate

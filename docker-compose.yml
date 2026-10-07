@@ -35,6 +35,33 @@ services:
       - redis_data:/data
     networks: [app]
 
+  migrations:
+    build: .
+    environment:
+      <<: *app-environment
+      DJANGO_SETTINGS_MODULE: config.settings.container
+      DB_HOST: db
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CERTIFICATE_ENCRYPTION_KEY_FILE: ${CERTIFICATE_ENCRYPTION_KEY_FILE:-/dados/certificados/.secrets/certificate-vault.key}
+      CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE: ${CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE:-/dados/certificados/.secrets/certificate-upload-private.key}
+      CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE: /dados/certificate-public/certificate-upload-public.key
+    command: >
+      sh -c "python manage.py generate_certificate_key --if-missing &&
+      python manage.py generate_certificate_upload_keypair --if-missing &&
+      python manage.py migrate --noinput"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${CERTIFICATES_HOST_DIR:?set CERTIFICATES_HOST_DIR in .env}
+        target: /dados/certificados
+      - type: bind
+        source: ${CERTIFICATE_PUBLIC_HOST_DIR:?set CERTIFICATE_PUBLIC_HOST_DIR in .env}
+        target: /dados/certificate-public
+    networks: [app]
+
   web:
     build: .
     environment:
@@ -43,21 +70,38 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       REDIS_URL: redis://redis:6379/0
+      CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE: /dados/certificate-public/certificate-upload-public.key
     command: >
-      sh -c "python manage.py migrate --noinput &&
-      python manage.py collectstatic --noinput &&
+      sh -c "python manage.py collectstatic --noinput &&
       gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile - --error-logfile -"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:${APP_PORT:-8000}:8000"
+      migrations:
+        condition: service_completed_successfully
     volumes:
       - type: bind
         source: ${NOTES_HOST_DIR:?set NOTES_HOST_DIR in .env}
         target: /dados/notas
+        read_only: true
+      - type: bind
+        source: ${CERTIFICATE_PUBLIC_HOST_DIR:?set CERTIFICATE_PUBLIC_HOST_DIR in .env}
+        target: /dados/certificate-public
+        read_only: true
+    networks: [app]
+
+  proxy:
+    image: nginx:1.27-alpine
+    depends_on:
+      - web
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8080"
+    volumes:
+      - type: bind
+        source: ./deploy/nginx/default.conf
+        target: /etc/nginx/conf.d/default.conf
         read_only: true
     networks: [app]
 
@@ -70,12 +114,19 @@ services:
       DB_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       CERTIFICATE_ENCRYPTION_KEY_FILE: ${CERTIFICATE_ENCRYPTION_KEY_FILE:-/dados/certificados/.secrets/certificate-vault.key}
-    command: celery -A config worker --loglevel=INFO
+      CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE: ${CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE:-/dados/certificados/.secrets/certificate-upload-private.key}
+      CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE: /dados/certificate-public/certificate-upload-public.key
+    command: >
+      sh -c "python manage.py generate_certificate_key --if-missing &&
+      python manage.py generate_certificate_upload_keypair --if-missing &&
+      celery -A config worker --loglevel=INFO"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     volumes:
       - type: bind
         source: ${NOTES_HOST_DIR:?set NOTES_HOST_DIR in .env}
@@ -83,6 +134,9 @@ services:
       - type: bind
         source: ${CERTIFICATES_HOST_DIR:?set CERTIFICATES_HOST_DIR in .env}
         target: /dados/certificados
+      - type: bind
+        source: ${CERTIFICATE_PUBLIC_HOST_DIR:?set CERTIFICATE_PUBLIC_HOST_DIR in .env}
+        target: /dados/certificate-public
     networks: [app]
 
   scheduler:
@@ -99,6 +153,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     networks: [app]
 
 volumes:

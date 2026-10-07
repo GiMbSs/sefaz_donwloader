@@ -1,0 +1,28 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Certificado A1 · SEFAZ Downloader{% endblock %}
+{% block page_title %}Enviar certificado A1{% endblock %}
+
+{% block content %}
+  <section class="form-panel certificate-form-panel">
+    <p class="lede">{{ company.legal_name }}</p>
+    <p class="muted">CNPJ {{ company.tax_identifier }} · o certificado será associado somente a esta empresa.</p>
+    <div class="security-note"><strong>Processamento protegido.</strong><span>O arquivo e a senha são cifrados no envio. Após a validação, o banco retém somente o hash da senha; os arquivos cifrados ficam na pasta privada desta empresa, acessível exclusivamente ao worker.</span></div>
+    {% if latest_upload and latest_upload.status != 'completed' %}
+      <div class="upload-state"><span class="status status-{{ latest_upload.status }}">{{ latest_upload.get_status_display }}</span><p>{{ latest_upload.error_message|default:'Existe um envio recente; aguarde o resultado antes de enviar novamente.' }}</p></div>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+        <div class="field-group full-row">
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}
+          {% if field.errors %}<div class="field-error">{{ field.errors }}</div>{% endif %}
+        </div>
+      {% endfor %}
+      <div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Enviar para processamento seguro</button></div>
+    </form>
+  </section>
+{% endblock %}

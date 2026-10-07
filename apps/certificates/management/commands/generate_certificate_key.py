@@ -11,10 +11,14 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):  # type: ignore[no-untyped-def]
         parser.add_argument("--path", type=Path, default=settings.CERTIFICATE_ENCRYPTION_KEY_FILE)
+        parser.add_argument("--if-missing", action="store_true")
 
     def handle(self, *args, **options):  # type: ignore[no-untyped-def]
         path: Path = options["path"]
         if path.exists():
+            if options["if_missing"]:
+                self.stdout.write("Certificate vault key already exists.")
+                return
             raise CommandError(f"Refusing to overwrite existing key file: {path}")
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -22,4 +26,3 @@ class Command(BaseCommand):
             key_file.write(base64.urlsafe_b64encode(os.urandom(32)))
             key_file.write(b"\n")
         self.stdout.write(self.style.SUCCESS(f"Certificate vault key created at {path}"))
-

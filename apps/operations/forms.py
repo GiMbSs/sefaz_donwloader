@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from django import forms
+from django.core.files.uploadedfile import UploadedFile
 from django.db.models import QuerySet
 
+from apps.certificates.services.uploads import (
+    CertificateUploadError,
+    validate_certificate_upload_metadata,
+)
 from apps.fiscal.models import NsuControl, SyncPolicy
 from apps.organizations.models import AccountingOffice, ClientCompany
 
@@ -86,3 +91,31 @@ class ManualSyncRequestForm(forms.Form):
         choices=NsuControl.Environment.choices,
         initial=NsuControl.Environment.PRODUCTION,
     )
+
+
+class CertificateUploadForm(forms.Form):
+    certificate_file = forms.FileField(
+        label="Arquivo do certificado A1",
+        help_text="Envie um arquivo .pfx ou .p12 de até 5 MB.",
+        widget=forms.ClearableFileInput(
+            attrs={"accept": ".pfx,.p12,application/x-pkcs12"}
+        ),
+    )
+    password = forms.CharField(
+        label="Senha do certificado",
+        max_length=1024,
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+    )
+
+    def clean_certificate_file(self) -> UploadedFile:
+        certificate_file = self.cleaned_data["certificate_file"]
+        try:
+            validate_certificate_upload_metadata(
+                filename=certificate_file.name,
+                payload_size=certificate_file.size,
+                password="valid-for-size-check",
+            )
+        except CertificateUploadError as error:
+            raise forms.ValidationError(str(error)) from error
+        return certificate_file
