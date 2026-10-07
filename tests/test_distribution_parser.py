@@ -15,7 +15,7 @@ def test_parses_official_distribution_envelope_and_decodes_doczip():
       <chNFe>25010100000000000191550010000000011000000010</chNFe>
       <mod>55</mod>
     </resNFe>"""
-    payload = f"""<retDistDFeInt xmlns=\"http://www.portalfiscal.inf.br/nfe\">
+    payload = f"""<retDistDFeInt xmlns=\"http://www.portalfiscal.inf.br/nfe\" versao=\"1.01\">
       <tpAmb>1</tpAmb><verAplic>SVRS</verAplic><cStat>138</cStat>
       <xMotivo>Documentos localizados</xMotivo>
       <dhResp>2026-10-07T10:00:00-03:00</dhResp>

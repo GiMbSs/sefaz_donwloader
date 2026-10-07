@@ -106,6 +106,17 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
 
 FISCAL_NOTES_ROOT = Path(os.environ.get("NOTES_STORAGE_ROOT", "/dados/notas"))
+FISCAL_SCHEMA_ROOT = Path(
+    os.environ.get("FISCAL_SCHEMA_ROOT", BASE_DIR / "vendor" / "sefaz-schemas")
+)
+SEFAZ_CONNECT_TIMEOUT_SECONDS = float(
+    os.environ.get("SEFAZ_CONNECT_TIMEOUT_SECONDS", "10")
+)
+SEFAZ_READ_TIMEOUT_SECONDS = float(os.environ.get("SEFAZ_READ_TIMEOUT_SECONDS", "60"))
+SEFAZ_MAX_RESPONSE_BYTES = int(
+    os.environ.get("SEFAZ_MAX_RESPONSE_BYTES", str(10 * 1024 * 1024))
+)
+SEFAZ_TLS_CA_BUNDLE = os.environ.get("SEFAZ_TLS_CA_BUNDLE", "")
 CERTIFICATE_VAULT_ROOT = Path(
     os.environ.get("CERTIFICATE_STORAGE_ROOT", "/dados/certificados")
 )

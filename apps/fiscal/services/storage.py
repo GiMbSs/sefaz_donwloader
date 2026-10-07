@@ -24,8 +24,18 @@ class FiscalStorage:
             raise FiscalStorageError("Storage path escaped the notes root.")
         return target
 
-    def write_response(self, company_id: int, response: bytes) -> str:
-        relative_path = Path("_lotes") / str(company_id) / f"{uuid.uuid4()}.xml"
+    def write_response(
+        self,
+        company_id: int,
+        response: bytes,
+        *,
+        category: str = "distribution",
+    ) -> str:
+        if category not in {"distribution", "soap"}:
+            raise FiscalStorageError("Response storage category is not supported.")
+        relative_path = (
+            Path("_lotes") / str(company_id) / f"{category}-{uuid.uuid4()}.xml"
+        )
         self._write(relative_path, response)
         return str(relative_path)
 

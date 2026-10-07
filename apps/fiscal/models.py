@@ -135,6 +135,7 @@ class DistributionBatch(models.Model):
     )
     response_sha256 = models.CharField(max_length=64)
     raw_response_path = models.CharField(max_length=255)
+    soap_response_path = models.CharField(max_length=255, blank=True)
     status_code = models.CharField(max_length=8)
     reason = models.TextField(blank=True)
     response_at = models.DateTimeField(null=True, blank=True)

@@ -21,7 +21,18 @@ from django.db import transaction
 from django.utils import timezone
 from lxml import etree
 
-from apps.fiscal.models import DistributionBatch, DistributionItem, FiscalDocument, NsuControl
+from apps.fiscal.models import (
+    DistributionBatch,
+    DistributionItem,
+    FiscalDocument,
+    NsuControl,
+)
+from apps.fiscal.services.schemas import (
+    FiscalSchemaError,
+    known_distributed_schema,
+    parse_fiscal_xml,
+    validate_fiscal_xml,
+)
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 
 MAX_COMPRESSED_DOCUMENT_BYTES = 2 * 1024 * 1024
@@ -42,6 +53,7 @@ class DecodedDocument:
 
 @dataclass(frozen=True)
 class DistributionResponse:
+    environment: str
     status_code: str
     reason: str
     returned_last_nsu: str
@@ -51,16 +63,14 @@ class DistributionResponse:
 
 
 def parse_distribution_response(payload: bytes) -> DistributionResponse:
-    if not payload or b"<!DOCTYPE" in payload.upper():
-        raise DistributionParseError("Distribution response is empty or contains a forbidden DTD.")
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
     try:
-        root = etree.fromstring(payload, parser=parser)
-    except etree.XMLSyntaxError as error:
-        raise DistributionParseError("Distribution response is not well-formed XML.") from error
-    if etree.QName(root).localname != "retDistDFeInt":
-        raise DistributionParseError("Unexpected root element in distribution response.")
+        root = validate_fiscal_xml(payload, expected_root="retDistDFeInt")
+    except FiscalSchemaError as error:
+        raise DistributionParseError(
+            "A resposta de distribuição não atende ao schema oficial."
+        ) from error
 
+    environment = _required_text(root, "tpAmb")
     status_code = _required_text(root, "cStat")
     reason = _optional_text(root, "xMotivo")
     returned_last_nsu = _optional_text(root, "ultNSU")
@@ -68,6 +78,7 @@ def parse_distribution_response(payload: bytes) -> DistributionResponse:
     response_at = _optional_text(root, "dhResp")
     documents = tuple(_decode_documents(root.findall(".//{*}docZip")))
     return DistributionResponse(
+        environment=environment,
         status_code=status_code,
         reason=reason,
         returned_last_nsu=returned_last_nsu,
@@ -124,6 +135,7 @@ def persist_distribution_response(
     *,
     control_id: int,
     raw_response: bytes,
+    soap_response: bytes | None = None,
     sync_request_id: int | None = None,
     storage: FiscalStorage | None = None,
 ) -> DistributionBatch:
@@ -135,7 +147,15 @@ def persist_distribution_response(
     created_paths: list[str] = []
     try:
         with transaction.atomic():
-            control = NsuControl.objects.select_for_update().select_related("company").get(pk=control_id)
+            control = (
+                NsuControl.objects.select_for_update()
+                .select_related("company")
+                .get(pk=control_id)
+            )
+            if parsed.environment != _environment_code(control.environment):
+                raise DistributionParseError(
+                    "A resposta de distribuição pertence a outro ambiente fiscal."
+                )
             existing = DistributionBatch.objects.filter(
                 company=control.company,
                 response_sha256=response_sha256,
@@ -143,14 +163,27 @@ def persist_distribution_response(
             if existing is not None:
                 return existing
 
-            raw_path = storage.write_response(control.company_id, raw_response)
+            raw_path = storage.write_response(
+                control.company_id,
+                raw_response,
+                category="distribution",
+            )
             created_paths.append(raw_path)
+            soap_path = ""
+            if soap_response is not None:
+                soap_path = storage.write_response(
+                    control.company_id,
+                    soap_response,
+                    category="soap",
+                )
+                created_paths.append(soap_path)
             batch = DistributionBatch.objects.create(
                 company=control.company,
                 nsu_control=control,
                 sync_request_id=sync_request_id,
                 response_sha256=response_sha256,
                 raw_response_path=raw_path,
+                soap_response_path=soap_path,
                 status_code=parsed.status_code,
                 reason=parsed.reason,
                 returned_last_nsu=parsed.returned_last_nsu,
@@ -181,7 +214,21 @@ def persist_distribution_response(
 def _persist_document(
     *, batch: DistributionBatch, decoded: DecodedDocument, storage: FiscalStorage
 ) -> str | None:
-    root = _parse_inner_xml(decoded.xml_payload)
+    expected_root = known_distributed_schema(decoded.schema_name)
+    validation_status = FiscalDocument.ValidationStatus.PENDING_SCHEMA
+    validation_error = ""
+    try:
+        root = (
+            validate_fiscal_xml(decoded.xml_payload, expected_root=expected_root)
+            if expected_root is not None
+            else parse_fiscal_xml(decoded.xml_payload)
+        )
+        if expected_root is not None:
+            validation_status = FiscalDocument.ValidationStatus.VALID
+    except FiscalSchemaError:
+        root = _parse_inner_xml(decoded.xml_payload)
+        validation_status = FiscalDocument.ValidationStatus.INVALID
+        validation_error = "O XML distribuído não atende ao schema declarado."
     document_root = etree.QName(root).localname
     access_key = _extract_access_key(root)
     if not access_key:
@@ -216,17 +263,37 @@ def _persist_document(
             "document_root": document_root,
             "xml_sha256": xml_sha256,
             "xml_path": relative_path,
+            "validation_status": validation_status,
+            "validation_error": validation_error,
         },
     )
     is_duplicate = not created and fiscal_document.xml_sha256 == xml_sha256
-    if not created and _kind_rank(kind) > _kind_rank(fiscal_document.kind):
+    should_replace = not created and (
+        _kind_rank(kind) > _kind_rank(fiscal_document.kind)
+        or (
+            _kind_rank(kind) == _kind_rank(fiscal_document.kind)
+            and fiscal_document.xml_sha256 != xml_sha256
+        )
+    )
+    if should_replace:
         fiscal_document.kind = kind
         fiscal_document.schema_name = decoded.schema_name
         fiscal_document.document_root = document_root
         fiscal_document.xml_sha256 = xml_sha256
         fiscal_document.xml_path = relative_path
+        fiscal_document.validation_status = validation_status
+        fiscal_document.validation_error = validation_error
         fiscal_document.save(
-            update_fields=("kind", "schema_name", "document_root", "xml_sha256", "xml_path", "last_received_at")
+            update_fields=(
+                "kind",
+                "schema_name",
+                "document_root",
+                "xml_sha256",
+                "xml_path",
+                "validation_status",
+                "validation_error",
+                "last_received_at",
+            )
         )
     DistributionItem.objects.create(
         batch=batch,
@@ -245,10 +312,12 @@ def _persist_document(
 
 
 def _parse_inner_xml(payload: bytes) -> etree._Element:
-    if b"<!DOCTYPE" in payload.upper():
-        raise DistributionParseError("Distributed XML contains a forbidden DTD.")
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
-    return etree.fromstring(payload, parser=parser)
+    try:
+        return parse_fiscal_xml(payload)
+    except FiscalSchemaError as error:
+        raise DistributionParseError(
+            "O XML distribuído não é seguro ou bem-formado."
+        ) from error
 
 
 def _extract_access_key(root: etree._Element) -> str:
@@ -295,20 +364,31 @@ def _kind_rank(kind: str) -> int:
 
 def _advance_control(control: NsuControl, response: DistributionResponse) -> None:
     """Persist only SEFAZ-provided cursors and mandatory cooldowns."""
-    if response.returned_last_nsu:
-        control.last_nsu = response.returned_last_nsu
-    if response.returned_max_nsu:
-        control.maximum_nsu = response.returned_max_nsu
     control.last_status_code = response.status_code
     control.blocked_reason = ""
-    if response.status_code in {"137", "656"}:
+    if response.status_code == "656":
         control.next_allowed_at = timezone.now() + timedelta(hours=1)
         control.blocked_reason = response.reason
-    elif response.returned_last_nsu and response.returned_last_nsu == response.returned_max_nsu:
-        control.next_allowed_at = timezone.now() + timedelta(hours=1)
-        control.blocked_reason = "Nenhum novo NSU disponível; aguardar uma hora."
     else:
-        control.next_allowed_at = None
+        if response.returned_last_nsu:
+            if int(response.returned_last_nsu) < int(control.last_nsu or "0"):
+                raise DistributionParseError(
+                    "A resposta tentou retroceder o cursor NSU."
+                )
+            control.last_nsu = response.returned_last_nsu
+        if response.returned_max_nsu:
+            control.maximum_nsu = response.returned_max_nsu
+        if response.status_code == "137":
+            control.next_allowed_at = timezone.now() + timedelta(hours=1)
+            control.blocked_reason = response.reason
+        elif (
+            response.returned_last_nsu
+            and response.returned_last_nsu == response.returned_max_nsu
+        ):
+            control.next_allowed_at = timezone.now() + timedelta(hours=1)
+            control.blocked_reason = "Nenhum novo NSU disponível; aguardar uma hora."
+        else:
+            control.next_allowed_at = None
     control.save(
         update_fields=(
             "last_nsu",
@@ -319,3 +399,7 @@ def _advance_control(control: NsuControl, response: DistributionResponse) -> Non
             "updated_at",
         )
     )
+
+
+def _environment_code(environment: str) -> str:
+    return "1" if environment == NsuControl.Environment.PRODUCTION else "2"
