@@ -28,12 +28,13 @@ from apps.fiscal.services.sync import (
     request_synchronization,
 )
 from apps.operations.forms import (
+    AlertResolutionForm,
     CertificateUploadForm,
     ClientCompanyForm,
     ManualSyncRequestForm,
     SyncPolicyForm,
 )
-from apps.operations.models import AuditLog
+from apps.operations.models import AuditLog, OperationAlert
 from apps.organizations.access import (
     accessible_companies,
     manageable_companies,
@@ -83,6 +84,16 @@ class DashboardView(LoginRequiredMixin, TemplateView):
                 )
                 .select_related("company", "requested_by")
                 .order_by("-requested_at")[:8],
+                "open_alerts": OperationAlert.objects.filter(
+                    company_id__in=active_company_ids,
+                    status=OperationAlert.Status.OPEN,
+                )
+                .select_related("company")
+                .order_by("-created_at")[:8],
+                "open_alert_count": OperationAlert.objects.filter(
+                    company_id__in=active_company_ids,
+                    status=OperationAlert.Status.OPEN,
+                ).count(),
             }
         )
         return context
@@ -438,3 +449,80 @@ class FiscalDocumentDownloadView(LoginRequiredMixin, View):
             },
         )
         return FileResponse(path.open("rb"), as_attachment=True, filename=path.name)
+
+
+class OperationAlertListView(LoginRequiredMixin, ListView):
+    template_name = "operations/alert_list.html"
+    context_object_name = "alerts"
+    paginate_by = 50
+
+    def get_queryset(self) -> QuerySet[OperationAlert]:
+        queryset = OperationAlert.objects.filter(
+            company__in=accessible_companies(self.request.user)
+        ).select_related("company", "resolved_by")
+        status = self.request.GET.get("status", "open")
+        severity = self.request.GET.get("severity", "")
+        if status not in OperationAlert.Status.values:
+            status = OperationAlert.Status.OPEN
+        queryset = queryset.filter(status=status)
+        if severity in OperationAlert.Severity.values:
+            queryset = queryset.filter(severity=severity)
+        return queryset
+
+    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        selected_status = self.request.GET.get("status", OperationAlert.Status.OPEN)
+        if selected_status not in OperationAlert.Status.values:
+            selected_status = OperationAlert.Status.OPEN
+        context.update(
+            {
+                "selected_status": selected_status,
+                "selected_severity": self.request.GET.get("severity", ""),
+                "status_choices": OperationAlert.Status.choices,
+                "severity_choices": OperationAlert.Severity.choices,
+                "manageable_company_ids": set(
+                    manageable_companies(self.request.user).values_list("pk", flat=True)
+                ),
+            }
+        )
+        return context
+
+
+class OperationAlertResolveView(LoginRequiredMixin, View):
+    def post(self, request: HttpRequest, alert_id: int) -> HttpResponse:
+        alert = get_object_or_404(
+            OperationAlert.objects.filter(
+                company__in=manageable_companies(request.user)
+            ),
+            pk=alert_id,
+        )
+        form = AlertResolutionForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Não foi possível registrar a resolução do alerta.")
+            return redirect("alert-list")
+        with transaction.atomic():
+            alert = OperationAlert.objects.select_for_update().get(pk=alert.pk)
+            if alert.status == OperationAlert.Status.RESOLVED:
+                messages.info(request, "Este alerta já estava resolvido.")
+                return redirect("alert-list")
+            alert.status = OperationAlert.Status.RESOLVED
+            alert.resolved_by = request.user
+            alert.resolved_at = timezone.now()
+            alert.resolution_note = form.cleaned_data["resolution_note"]
+            alert.save(
+                update_fields=(
+                    "status",
+                    "resolved_by",
+                    "resolved_at",
+                    "resolution_note",
+                    "updated_at",
+                )
+            )
+            AuditLog.objects.create(
+                actor=request.user,
+                action="operations.alert_resolved",
+                target=f"operations.alert:{alert.pk}",
+                payload={"company_id": alert.company_id, "code": alert.code},
+            )
+        messages.success(request, "Alerta marcado como resolvido.")
+        return redirect("alert-list")

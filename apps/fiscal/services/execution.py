@@ -26,6 +26,7 @@ from apps.fiscal.services.sefaz import (
 )
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.operations.models import AuditLog
+from apps.operations.services import open_operation_alert
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,18 @@ def _finish_succeeded(
             result=batch.status_code,
             failed=False,
         )
+        if batch.status_code == "656":
+            open_operation_alert(
+                company_id=sync_request.company_id,
+                code="sefaz_consumption_block",
+                severity="warning",
+                title="Consulta bloqueada temporariamente pela SEFAZ",
+                message=(
+                    "A SEFAZ respondeu cStat 656. O sistema respeitará a janela "
+                    "de espera antes de uma nova consulta."
+                ),
+                context={"status_code": batch.status_code},
+            )
         AuditLog.objects.create(
             actor=sync_request.requested_by,
             action="fiscal.sync_request_succeeded",
@@ -292,6 +305,14 @@ def _finish_failed(
             result="failed",
             failed=True,
         )
+        open_operation_alert(
+            company_id=sync_request.company_id,
+            code="sync_execution_failed",
+            severity="critical",
+            title="Sincronização fiscal não concluída",
+            message=detail,
+            context={"environment": sync_request.environment, "reason": reason},
+        )
         AuditLog.objects.create(
             actor=sync_request.requested_by,
             action="fiscal.sync_request_failed",
@@ -320,6 +341,14 @@ def _finish_request_without_remote_call(
         now=now,
         result="failed",
         failed=True,
+    )
+    open_operation_alert(
+        company_id=sync_request.company_id,
+        code="certificate_unavailable",
+        severity="critical",
+        title="Certificado A1 indisponível",
+        message=detail,
+        context={"environment": sync_request.environment, "reason": reason},
     )
     AuditLog.objects.create(
         actor=sync_request.requested_by,

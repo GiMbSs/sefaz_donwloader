@@ -1,0 +1,43 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Alertas · SEFAZ Downloader{% endblock %}
+{% block page_title %}Alertas operacionais{% endblock %}
+
+{% block content %}
+  <section class="intro-row">
+    <div>
+      <p class="lede">Exceções fiscais e operacionais que exigem acompanhamento humano.</p>
+      <p class="muted">Operadores consultam os alertas do seu escritório; a resolução fica registrada por uma pessoa administradora.</p>
+    </div>
+  </section>
+
+  <form class="filter-bar" method="get">
+    <div class="filter-field"><label for="id_status">Situação</label><select id="id_status" name="status">{% for value, label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="filter-field"><label for="id_severity">Gravidade</label><select id="id_severity" name="severity"><option value="">Todas</option>{% for value, label in severity_choices %}<option value="{{ value }}" {% if selected_severity == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <button class="button button-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if alerts %}
+    <div class="table-wrap alert-table">
+      <table>
+        <thead><tr><th>Gravidade</th><th>Empresa</th><th>Alerta</th><th>Aberto em</th><th>Situação</th><th>Ação</th></tr></thead>
+        <tbody>
+          {% for alert in alerts %}
+            <tr>
+              <td><span class="status status-{{ alert.severity }}">{{ alert.get_severity_display }}</span></td>
+              <td><a href="{% url 'company-detail' alert.company_id %}">{{ alert.company.legal_name }}</a></td>
+              <td><strong>{{ alert.title }}</strong><div class="alert-message">{{ alert.message }}</div>{% if alert.status == 'resolved' %}<div class="alert-resolution">Resolvido por {{ alert.resolved_by.get_full_name|default:alert.resolved_by.email|default:'usuário removido' }} em {{ alert.resolved_at|date:'d/m/Y H:i' }}{% if alert.resolution_note %}: {{ alert.resolution_note }}{% endif %}</div>{% endif %}</td>
+              <td>{{ alert.created_at|date:'d/m/Y H:i' }}</td>
+              <td><span class="status status-{{ alert.status }}">{{ alert.get_status_display }}</span></td>
+              <td>{% if alert.status == 'open' and alert.company_id in manageable_company_ids %}<form method="post" action="{% url 'alert-resolve' alert.pk %}" class="resolve-form">{% csrf_token %}<label class="sr-only" for="resolution-note-{{ alert.pk }}">Registro da resolução para {{ alert.title }}</label><textarea id="resolution-note-{{ alert.pk }}" name="resolution_note" rows="2" maxlength="2000" placeholder="Registro opcional"></textarea><button class="button button-secondary" type="submit">Marcar resolvido</button></form>{% else %}<span class="quiet">{% if alert.status == 'open' %}Somente administradores{% else %}—{% endif %}</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><h2>Nenhum alerta encontrado</h2><p>Alertas aparecem quando uma exceção exige revisão da equipe responsável.</p></div>
+  {% endif %}
+
+  {% if is_paginated %}<nav class="pagination" aria-label="Paginação">{% if page_obj.has_previous %}<a href="?status={{ selected_status }}&severity={{ selected_severity }}&page={{ page_obj.previous_page_number }}">Anterior</a>{% endif %}<span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a href="?status={{ selected_status }}&severity={{ selected_severity }}&page={{ page_obj.next_page_number }}">Próxima</a>{% endif %}</nav>{% endif %}
+{% endblock %}

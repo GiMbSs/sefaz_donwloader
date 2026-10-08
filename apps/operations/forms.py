@@ -93,6 +93,20 @@ class ManualSyncRequestForm(forms.Form):
     )
 
 
+class AlertResolutionForm(forms.Form):
+    resolution_note = forms.CharField(
+        label="Registro da resolução",
+        max_length=2000,
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "rows": 2,
+                "placeholder": "Opcional: informe a medida adotada.",
+            }
+        ),
+    )
+
+
 class CertificateUploadForm(forms.Form):
     certificate_file = forms.FileField(
         label="Arquivo do certificado A1",

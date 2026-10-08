@@ -16,7 +16,7 @@
     <div><strong>{{ active_company_count }}</strong><span>empresas ativas</span></div>
     <div><strong>{{ blocked_controls|length }}</strong><span>consultas em espera</span></div>
     <div><strong>{{ expiring_certificates|length }}</strong><span>certificados a vencer</span></div>
-    <div><strong>{{ company_count }}</strong><span>empresas visíveis</span></div>
+    <div><strong>{{ open_alert_count }}</strong><span>alertas abertos</span></div>
   </section>
 
   <div class="workspace-grid">
@@ -51,8 +51,11 @@
 
     <aside class="panel panel-side">
       <div class="section-heading"><div><h2>Atenção</h2><p>Itens que exigem acompanhamento.</p></div></div>
-      {% if blocked_controls or expiring_certificates %}
+      {% if open_alerts or blocked_controls or expiring_certificates %}
         <ul class="attention-list">
+          {% for alert in open_alerts %}
+            <li><strong><a href="{% url 'alert-list' %}">{{ alert.title }}</a></strong><span>{{ alert.company.legal_name }} · {{ alert.message }}</span></li>
+          {% endfor %}
           {% for control in blocked_controls %}
             <li><strong>{{ control.company.legal_name }}</strong><span>{{ control.get_environment_display }} liberado em {{ control.next_allowed_at|date:'d/m H:i' }}</span></li>
           {% endfor %}
@@ -61,7 +64,7 @@
           {% endfor %}
         </ul>
       {% else %}
-        <p class="quiet">Não há bloqueios nem certificados com vencimento nos próximos 30 dias.</p>
+        <p class="quiet">Não há alertas abertos, bloqueios nem certificados com vencimento nos próximos 30 dias.</p>
       {% endif %}
     </aside>
   </div>

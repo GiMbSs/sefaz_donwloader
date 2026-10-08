@@ -20,6 +20,7 @@
           <a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Operação</a>
           <a href="{% url 'company-list' %}" {% if request.resolver_match.url_name|slice:':7' == 'company' %}aria-current="page"{% endif %}>Empresas</a>
           <a href="{% url 'document-list' %}" {% if request.resolver_match.url_name|slice:':8' == 'document' %}aria-current="page"{% endif %}>Documentos</a>
+          <a href="{% url 'alert-list' %}" {% if request.resolver_match.url_name|slice:':5' == 'alert' %}aria-current="page"{% endif %}>Alertas</a>
         </nav>
         <div class="rail-foot">
           {% if request.user.is_staff %}<a href="{% url 'admin:index' %}">Administração técnica</a>{% endif %}

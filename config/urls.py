@@ -49,5 +49,11 @@ urlpatterns = [
         views.FiscalDocumentDownloadView.as_view(),
         name="document-download",
     ),
+    path("alertas/", views.OperationAlertListView.as_view(), name="alert-list"),
+    path(
+        "alertas/<int:alert_id>/resolver/",
+        views.OperationAlertResolveView.as_view(),
+        name="alert-resolve",
+    ),
     path("admin/", admin.site.urls),
 ]

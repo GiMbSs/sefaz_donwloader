@@ -15,6 +15,7 @@ from apps.fiscal.services.sync import (
     enqueue_due_synchronizations,
     request_synchronization,
 )
+from apps.operations.models import OperationAlert
 from apps.organizations.models import AccountingOffice, ClientCompany
 
 
@@ -214,6 +215,41 @@ def test_transport_failure_finishes_request_and_applies_conservative_hold():
     assert policy.last_result == "failed"
     assert policy.failure_count == 1
     assert len(client.calls) == 1
+    assert OperationAlert.objects.filter(
+        company=company,
+        code="sync_execution_failed",
+        severity=OperationAlert.Severity.CRITICAL,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_sefaz_consumption_block_creates_a_warning_alert(tmp_path):
+    now = timezone.now()
+    company = _company()
+    _certificate(company, now=now)
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.PRODUCTION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+        now=now,
+    )
+
+    result = execute_sync_request(
+        submission.request.pk,
+        client=_SuccessfulClient(
+            _distribution_response(status_code="656")
+        ),  # type: ignore[arg-type]
+        storage=FiscalStorage(root=tmp_path),
+        now=now,
+    )
+
+    assert result == SyncRequest.Status.SUCCEEDED
+    assert OperationAlert.objects.filter(
+        company=company,
+        code="sefaz_consumption_block",
+        severity=OperationAlert.Severity.WARNING,
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -240,3 +276,8 @@ def test_worker_does_not_contact_sefaz_without_an_active_certificate():
     assert submission.request.status == SyncRequest.Status.FAILED
     assert "Não há certificado A1" in submission.request.result_detail
     assert client.calls == []
+    assert OperationAlert.objects.filter(
+        company=company,
+        code="certificate_unavailable",
+        severity=OperationAlert.Severity.CRITICAL,
+    ).exists()
