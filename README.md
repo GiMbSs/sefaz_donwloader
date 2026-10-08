@@ -63,5 +63,8 @@ explicitamente o ambiente de homologação no `.env` com
 `production` sem a evidência de homologação e a autorização operacional
 registradas.
 
+O roteiro completo de pré-requisitos, backup/restauração, condições de parada
+e registro de evidências está em [Operação e homologação](docs/OPERACAO-HOMOLOGACAO.md).
+
 Consulte [o PRD](docs/PRD-IMPLEMENTACAO.md) antes de habilitar qualquer fluxo
 fiscal em ambiente de produção.
