@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -78,6 +79,25 @@ def execute_sync_request(
                 )
                 return SyncRequest.Status.SUCCEEDED
         return claimed
+
+    if (
+        client is None
+        and claimed.environment not in settings.SEFAZ_ENABLED_ENVIRONMENTS
+    ):
+        _finish_request_without_remote_call(
+            sync_request_id=claimed.request_id,
+            expected_status=SyncRequest.Status.RUNNING,
+            now=now,
+            detail=(
+                "O envio fiscal não está liberado para este ambiente. "
+                "A consulta não foi enviada à SEFAZ."
+            ),
+            reason="transport_not_enabled",
+            alert_code="sefaz_transport_not_enabled",
+            alert_title="Consulta fiscal aguardando habilitação do ambiente",
+            severity="warning",
+        )
+        return SyncRequest.Status.FAILED
 
     client = client or NfeDistributionClient()
     try:
@@ -189,13 +209,17 @@ def _claim_sync_request(
         )
         if certificate is None:
             _finish_request_without_remote_call(
-                sync_request=sync_request,
+                sync_request_id=sync_request.pk,
+                expected_status=SyncRequest.Status.QUEUED,
                 now=now,
                 detail=(
                     "Não há certificado A1 ativo e válido para esta empresa. "
                     "A consulta não foi enviada à SEFAZ."
                 ),
                 reason="certificate_unavailable",
+                alert_code="certificate_unavailable",
+                alert_title="Certificado A1 indisponível",
+                severity="critical",
             )
             return SyncRequest.Status.FAILED
 
@@ -327,39 +351,52 @@ def _finish_failed(
 
 def _finish_request_without_remote_call(
     *,
-    sync_request: SyncRequest,
+    sync_request_id: int,
+    expected_status: str,
     now: datetime,
     detail: str,
     reason: str,
+    alert_code: str,
+    alert_title: str,
+    severity: str,
 ) -> None:
-    sync_request.status = SyncRequest.Status.FAILED
-    sync_request.finished_at = now
-    sync_request.result_detail = detail
-    sync_request.save(update_fields=("status", "finished_at", "result_detail"))
-    _record_policy_outcome(
-        company_id=sync_request.company_id,
-        now=now,
-        result="failed",
-        failed=True,
-    )
-    open_operation_alert(
-        company_id=sync_request.company_id,
-        code="certificate_unavailable",
-        severity="critical",
-        title="Certificado A1 indisponível",
-        message=detail,
-        context={"environment": sync_request.environment, "reason": reason},
-    )
-    AuditLog.objects.create(
-        actor=sync_request.requested_by,
-        action="fiscal.sync_request_failed",
-        target=f"fiscal.sync_request:{sync_request.pk}",
-        payload={
-            "company_id": sync_request.company_id,
-            "environment": sync_request.environment,
-            "reason": reason,
-        },
-    )
+    with transaction.atomic():
+        sync_request = (
+            SyncRequest.objects.select_for_update()
+            .select_related("requested_by")
+            .filter(pk=sync_request_id)
+            .first()
+        )
+        if sync_request is None or sync_request.status != expected_status:
+            return
+        sync_request.status = SyncRequest.Status.FAILED
+        sync_request.finished_at = now
+        sync_request.result_detail = detail
+        sync_request.save(update_fields=("status", "finished_at", "result_detail"))
+        _record_policy_outcome(
+            company_id=sync_request.company_id,
+            now=now,
+            result="failed",
+            failed=True,
+        )
+        open_operation_alert(
+            company_id=sync_request.company_id,
+            code=alert_code,
+            severity=severity,
+            title=alert_title,
+            message=detail,
+            context={"environment": sync_request.environment, "reason": reason},
+        )
+        AuditLog.objects.create(
+            actor=sync_request.requested_by,
+            action="fiscal.sync_request_failed",
+            target=f"fiscal.sync_request:{sync_request.pk}",
+            payload={
+                "company_id": sync_request.company_id,
+                "environment": sync_request.environment,
+                "reason": reason,
+            },
+        )
 
 
 def _record_policy_outcome(

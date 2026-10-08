@@ -43,5 +43,25 @@ A execução em produção continua dependendo de certificado autorizado, ambien
 correto, volume persistente e teste controlado. Esta implementação não é
 evidência de cobertura de NFC-e ou de operação homologada/produção.
 
+## Pré-validação antes de homologar
+
+Depois de iniciar os containers e antes de qualquer consulta fiscal, execute no
+worker:
+
+```bash
+docker compose exec worker python manage.py verify_fiscal_installation --worker --write-notes-probe
+```
+
+O comando verifica conexão com o banco, migrations, checksums dos schemas
+locais, chaves de certificado e leitura/escrita atômica no volume de notas. A
+sonda de escrita é removida ao fim e o comando nunca faz uma chamada à SEFAZ.
+Corrija qualquer falha antes de realizar uma homologação controlada.
+
+O transporte fiscal começa bloqueado. Somente após essa pré-validação, habilite
+explicitamente o ambiente de homologação no `.env` com
+`SEFAZ_ENABLED_ENVIRONMENTS=homologation` e reinicie o worker. Não habilite
+`production` sem a evidência de homologação e a autorização operacional
+registradas.
+
 Consulte [o PRD](docs/PRD-IMPLEMENTACAO.md) antes de habilitar qualquer fluxo
 fiscal em ambiente de produção.

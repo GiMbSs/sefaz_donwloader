@@ -117,6 +117,11 @@ SEFAZ_MAX_RESPONSE_BYTES = int(
     os.environ.get("SEFAZ_MAX_RESPONSE_BYTES", str(10 * 1024 * 1024))
 )
 SEFAZ_TLS_CA_BUNDLE = os.environ.get("SEFAZ_TLS_CA_BUNDLE", "")
+SEFAZ_ENABLED_ENVIRONMENTS = frozenset(
+    environment.strip()
+    for environment in os.environ.get("SEFAZ_ENABLED_ENVIRONMENTS", "").split(",")
+    if environment.strip()
+)
 CERTIFICATE_VAULT_ROOT = Path(
     os.environ.get("CERTIFICATE_STORAGE_ROOT", "/dados/certificados")
 )

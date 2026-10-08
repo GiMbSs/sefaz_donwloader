@@ -143,6 +143,38 @@ def test_worker_executes_once_archives_response_and_finishes_request(tmp_path):
 
 
 @pytest.mark.django_db
+def test_worker_blocks_remote_transport_until_the_environment_is_enabled(settings):
+    now = timezone.now()
+    company = _company()
+    _certificate(company, now=now)
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.PRODUCTION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+        now=now,
+    )
+    settings.SEFAZ_ENABLED_ENVIRONMENTS = frozenset()
+
+    result = execute_sync_request(submission.request.pk, now=now)
+
+    submission.request.refresh_from_db()
+    control = NsuControl.objects.get(company=company)
+    assert result == SyncRequest.Status.FAILED
+    assert submission.request.status == SyncRequest.Status.FAILED
+    assert submission.request.result_detail == (
+        "O envio fiscal não está liberado para este ambiente. "
+        "A consulta não foi enviada à SEFAZ."
+    )
+    assert control.last_nsu == ""
+    assert control.next_allowed_at is None
+    assert OperationAlert.objects.filter(
+        company=company,
+        code="sefaz_transport_not_enabled",
+    ).exists()
+
+
+@pytest.mark.django_db
 def test_waiting_request_is_only_released_after_the_persisted_hold_expires():
     now = timezone.now()
     company = _company()

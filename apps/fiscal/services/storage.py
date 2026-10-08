@@ -103,6 +103,17 @@ class FiscalStorage:
             )
         return target
 
+    def probe_writable(self) -> None:
+        """Verify an atomic write/delete cycle without retaining fiscal data."""
+        relative_path = Path(f".sefaz-preflight-{uuid.uuid4()}")
+        try:
+            self._write(relative_path, b"sefaz-downloader storage preflight\n")
+            self.delete(str(relative_path))
+        except OSError as error:
+            raise FiscalStorageError(
+                "Fiscal storage did not complete an atomic write probe."
+            ) from error
+
     def _write(self, relative_path: Path, payload: bytes) -> None:
         target = self._safe_target(relative_path)
         target.parent.mkdir(mode=0o750, parents=True, exist_ok=True)

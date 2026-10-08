@@ -48,3 +48,11 @@ def test_rejects_filename_without_kind_discriminator(tmp_path):
             kind="event",
             payload=b"event",
         )
+
+
+def test_write_probe_does_not_retain_a_file(tmp_path):
+    storage = FiscalStorage(root=tmp_path)
+
+    storage.probe_writable()
+
+    assert list(tmp_path.iterdir()) == []
