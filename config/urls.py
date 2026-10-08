@@ -43,6 +43,11 @@ urlpatterns = [
         views.ManualSyncRequestView.as_view(),
         name="company-sync",
     ),
+    path(
+        "empresas/<int:company_id>/lotes/<int:batch_id>/reprocessar/",
+        views.DistributionBatchReprocessView.as_view(),
+        name="batch-reprocess",
+    ),
     path("documentos/", views.FiscalDocumentListView.as_view(), name="document-list"),
     path(
         "documentos/<int:document_id>/xml/",

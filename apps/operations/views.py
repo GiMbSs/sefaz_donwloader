@@ -21,7 +21,14 @@ from apps.certificates.services.uploads import (
     CertificateUploadError,
     stage_certificate_upload,
 )
-from apps.fiscal.models import FiscalDocument, NsuControl, SyncPolicy, SyncRequest
+from apps.fiscal.models import (
+    DistributionBatch,
+    FiscalDocument,
+    NsuControl,
+    SyncPolicy,
+    SyncRequest,
+)
+from apps.fiscal.services.distribution import request_distribution_batch_reprocessing
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.fiscal.services.sync import (
     SynchronizationRequestError,
@@ -162,6 +169,9 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
                 ).order_by("-requested_at")[:12],
                 "documents": company.fiscal_documents.order_by(
                     "-last_received_at"
+                )[:12],
+                "distribution_batches": company.distribution_batches.order_by(
+                    "-created_at"
                 )[:12],
                 "manual_sync_form": ManualSyncRequestForm(),
                 "can_manage": manageable_companies(self.request.user)
@@ -398,6 +408,45 @@ class ManualSyncRequestView(CompanyAccessMixin, View):
                     request,
                     "Já existe uma solicitação ativa para este ambiente.",
                 )
+        return redirect("company-detail", company_id=company.pk)
+
+
+class DistributionBatchReprocessView(CompanyAccessMixin, View):
+    manage_required = True
+
+    def post(
+        self, request: HttpRequest, company_id: int, batch_id: int
+    ) -> HttpResponse:
+        company = self.get_company()
+        batch = get_object_or_404(
+            DistributionBatch.objects.filter(company=company),
+            pk=batch_id,
+        )
+        submission = request_distribution_batch_reprocessing(batch_id=batch.pk)
+        if not submission.created:
+            messages.info(
+                request,
+                "Esse lote não está disponível para um novo reprocessamento local.",
+            )
+            return redirect("company-detail", company_id=company.pk)
+        AuditLog.objects.create(
+            actor=request.user,
+            action="fiscal.distribution_batch_reprocess_requested",
+            target=f"fiscal.distribution_batch:{batch.pk}",
+            payload={"company_id": company.pk},
+        )
+
+        def dispatch() -> None:
+            from apps.fiscal.tasks import reprocess_distribution_batch_task
+
+            reprocess_distribution_batch_task.delay(batch.pk)
+
+        transaction.on_commit(dispatch)
+        messages.success(
+            request,
+            "Reprocessamento local incluído na fila. Nenhuma consulta será enviada "
+            "à SEFAZ.",
+        )
         return redirect("company-detail", company_id=company.pk)
 
 

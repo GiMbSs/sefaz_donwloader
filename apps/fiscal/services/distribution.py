@@ -34,6 +34,7 @@ from apps.fiscal.services.schemas import (
     validate_fiscal_xml,
 )
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
+from apps.operations.services import open_operation_alert
 
 MAX_COMPRESSED_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_DECOMPRESSED_DOCUMENT_BYTES = 10 * 1024 * 1024
@@ -41,6 +42,10 @@ MAX_DECOMPRESSED_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 class DistributionParseError(ValueError):
     pass
+
+
+class DistributionReprocessError(ValueError):
+    """An archived distribution batch could not be processed locally."""
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,12 @@ class DistributionResponse:
     returned_max_nsu: str
     response_at: str
     documents: tuple[DecodedDocument, ...]
+
+
+@dataclass(frozen=True)
+class DistributionBatchReprocessSubmission:
+    batch: DistributionBatch
+    created: bool
 
 
 def parse_distribution_response(payload: bytes) -> DistributionResponse:
@@ -120,7 +131,9 @@ def _decode_documents(elements: Iterable[etree._Element]) -> Iterable[DecodedDoc
             with gzip.GzipFile(fileobj=io.BytesIO(compressed), mode="rb") as gzip_file:
                 xml_payload = gzip_file.read(MAX_DECOMPRESSED_DOCUMENT_BYTES + 1)
         except OSError as error:
-            raise DistributionParseError("docZip is not a valid gzip payload.") from error
+            raise DistributionParseError(
+                "docZip is not a valid gzip payload."
+            ) from error
         if len(xml_payload) > MAX_DECOMPRESSED_DOCUMENT_BYTES:
             raise DistributionParseError("docZip exceeds the decompressed size limit.")
         yield DecodedDocument(
@@ -139,7 +152,7 @@ def persist_distribution_response(
     sync_request_id: int | None = None,
     storage: FiscalStorage | None = None,
 ) -> DistributionBatch:
-    """Archive the raw response, persist documents, then advance NSU safely."""
+    """Archive a response first, then process it without another SEFAZ call."""
     parsed = parse_distribution_response(raw_response)
     response_sha256 = hashlib.sha256(raw_response).hexdigest()
     storage = storage or FiscalStorage()
@@ -161,54 +174,183 @@ def persist_distribution_response(
                 response_sha256=response_sha256,
             ).first()
             if existing is not None:
-                return existing
-
-            raw_path = storage.write_response(
-                control.company_id,
-                raw_response,
-                category="distribution",
-            )
-            created_paths.append(raw_path)
-            soap_path = ""
-            if soap_response is not None:
-                soap_path = storage.write_response(
+                batch = existing
+            else:
+                raw_path = storage.write_response(
                     control.company_id,
-                    soap_response,
-                    category="soap",
+                    raw_response,
+                    category="distribution",
                 )
-                created_paths.append(soap_path)
-            batch = DistributionBatch.objects.create(
-                company=control.company,
-                nsu_control=control,
-                sync_request_id=sync_request_id,
-                response_sha256=response_sha256,
-                raw_response_path=raw_path,
-                soap_response_path=soap_path,
-                status_code=parsed.status_code,
-                reason=parsed.reason,
-                returned_last_nsu=parsed.returned_last_nsu,
-                returned_max_nsu=parsed.returned_max_nsu,
-                document_count=len(parsed.documents),
+                created_paths.append(raw_path)
+                soap_path = ""
+                if soap_response is not None:
+                    soap_path = storage.write_response(
+                        control.company_id,
+                        soap_response,
+                        category="soap",
+                    )
+                    created_paths.append(soap_path)
+                batch = DistributionBatch.objects.create(
+                    company=control.company,
+                    nsu_control=control,
+                    sync_request_id=sync_request_id,
+                    response_sha256=response_sha256,
+                    raw_response_path=raw_path,
+                    soap_response_path=soap_path,
+                    status_code=parsed.status_code,
+                    reason=parsed.reason,
+                    returned_last_nsu=parsed.returned_last_nsu,
+                    returned_max_nsu=parsed.returned_max_nsu,
+                    document_count=len(parsed.documents),
+                )
+    except Exception:
+        for path in reversed(created_paths):
+            try:
+                storage.delete(path)
+            except FiscalStorageError:
+                pass
+        raise
+
+    return _process_archived_distribution_batch(
+        batch_id=batch.pk,
+        parsed=parsed,
+        storage=storage,
+    )
+
+
+def request_distribution_batch_reprocessing(
+    *, batch_id: int
+) -> DistributionBatchReprocessSubmission:
+    """Atomically accept one retry of a failed local batch processing run."""
+    with transaction.atomic():
+        batch = DistributionBatch.objects.select_for_update().get(pk=batch_id)
+        if batch.processing_status != DistributionBatch.ProcessingStatus.FAILED:
+            return DistributionBatchReprocessSubmission(batch=batch, created=False)
+        batch.processing_status = DistributionBatch.ProcessingStatus.RECEIVED
+        batch.processing_error = ""
+        batch.processed_at = None
+        batch.save(
+            update_fields=("processing_status", "processing_error", "processed_at")
+        )
+        return DistributionBatchReprocessSubmission(batch=batch, created=True)
+
+
+def reprocess_distribution_batch(
+    *, batch_id: int, storage: FiscalStorage | None = None
+) -> DistributionBatch:
+    """Process the saved response only; this function never contacts SEFAZ."""
+    storage = storage or FiscalStorage()
+    batch = DistributionBatch.objects.select_related("company").get(pk=batch_id)
+    if batch.processing_status == DistributionBatch.ProcessingStatus.PROCESSED:
+        return batch
+    if batch.processing_status != DistributionBatch.ProcessingStatus.RECEIVED:
+        return batch
+    try:
+        response_path = storage.path_for_read(batch.raw_response_path)
+        with response_path.open("rb") as response_file:
+            raw_response = response_file.read(settings.SEFAZ_MAX_RESPONSE_BYTES + 1)
+        if len(raw_response) > settings.SEFAZ_MAX_RESPONSE_BYTES:
+            raise DistributionReprocessError(
+                "O arquivo arquivado excede o limite de resposta aceito."
             )
+        if hashlib.sha256(raw_response).hexdigest() != batch.response_sha256:
+            raise DistributionReprocessError(
+                "O arquivo arquivado não corresponde ao hash do lote."
+            )
+        parsed = parse_distribution_response(raw_response)
+    except (
+        DistributionParseError,
+        DistributionReprocessError,
+        FiscalStorageError,
+        OSError,
+    ) as error:
+        _mark_batch_failed(batch_id=batch_id)
+        _open_batch_processing_alert(batch=batch, reason="archive_unavailable")
+        raise DistributionReprocessError(
+            "O lote arquivado não pôde ser lido com segurança."
+        ) from error
+    return _process_archived_distribution_batch(
+        batch_id=batch_id,
+        parsed=parsed,
+        storage=storage,
+    )
+
+
+def _process_archived_distribution_batch(
+    *,
+    batch_id: int,
+    parsed: DistributionResponse,
+    storage: FiscalStorage,
+) -> DistributionBatch:
+    created_paths: list[str] = []
+    batch: DistributionBatch | None = None
+    try:
+        with transaction.atomic():
+            batch = (
+                DistributionBatch.objects.select_for_update()
+                .select_related("company", "nsu_control")
+                .get(pk=batch_id)
+            )
+            if batch.processing_status == DistributionBatch.ProcessingStatus.PROCESSED:
+                return batch
+            if batch.processing_status != DistributionBatch.ProcessingStatus.RECEIVED:
+                return batch
+            if parsed.environment != _environment_code(batch.nsu_control.environment):
+                raise DistributionReprocessError(
+                    "O lote arquivado pertence a outro ambiente fiscal."
+                )
+            batch.items.all().delete()
             for document in parsed.documents:
                 path = _persist_document(batch=batch, decoded=document, storage=storage)
                 if path:
                     created_paths.append(path)
-
-            _advance_control(control, parsed)
+            _advance_control(batch.nsu_control, parsed)
             batch.processing_status = DistributionBatch.ProcessingStatus.PROCESSED
+            batch.processing_error = ""
             batch.processed_at = timezone.now()
-            batch.save(update_fields=("processing_status", "processed_at"))
+            batch.save(
+                update_fields=("processing_status", "processing_error", "processed_at")
+            )
             return batch
     except Exception:
         for path in reversed(created_paths):
             try:
                 storage.delete(path)
             except FiscalStorageError:
-                # The original error is more useful to the worker; the storage
-                # reconciler can surface an eventual cleanup failure separately.
                 pass
+        _mark_batch_failed(batch_id=batch_id)
+        if batch is not None:
+            _open_batch_processing_alert(batch=batch, reason="local_processing_failed")
         raise
+
+
+def _mark_batch_failed(*, batch_id: int) -> None:
+    with transaction.atomic():
+        batch = DistributionBatch.objects.select_for_update().get(pk=batch_id)
+        if batch.processing_status == DistributionBatch.ProcessingStatus.PROCESSED:
+            return
+        batch.processing_status = DistributionBatch.ProcessingStatus.FAILED
+        batch.processing_error = (
+            "O processamento local falhou; o retorno original permanece arquivado."
+        )
+        batch.processed_at = timezone.now()
+        batch.save(
+            update_fields=("processing_status", "processing_error", "processed_at")
+        )
+
+
+def _open_batch_processing_alert(*, batch: DistributionBatch, reason: str) -> None:
+    open_operation_alert(
+        company_id=batch.company_id,
+        code="distribution_batch_processing_failed",
+        severity="critical",
+        title="Lote fiscal aguardando reprocessamento local",
+        message=(
+            "O retorno original foi preservado, mas seus documentos não foram "
+            "processados integralmente. Reprocesse o lote sem consultar a SEFAZ."
+        ),
+        context={"batch_id": batch.pk, "reason": reason},
+    )
 
 
 def _persist_document(
@@ -308,6 +450,9 @@ def _persist_document(
             else DistributionItem.ProcessingStatus.STORED
         ),
     )
+    if not created and not should_replace:
+        storage.delete(relative_path)
+        return None
     return relative_path
 
 
@@ -333,7 +478,12 @@ def _extract_access_key(root: etree._Element) -> str:
 
 
 def _is_access_key(value: str) -> bool:
-    return len(value) == 44 and value.isascii() and value.isalnum() and value == value.upper()
+    return (
+        len(value) == 44
+        and value.isascii()
+        and value.isalnum()
+        and value == value.upper()
+    )
 
 
 def _extract_model(root: etree._Element, access_key: str) -> str:

@@ -49,5 +49,35 @@
 
   <section class="panel panel-full"><div class="section-heading"><div><h2>Solicitações recentes</h2><p>Histórico operacional da empresa.</p></div></div>{% if sync_requests %}<div class="table-wrap"><table><thead><tr><th>Solicitada</th><th>Ambiente</th><th>Origem</th><th>Situação</th><th>Detalhe</th></tr></thead><tbody>{% for item in sync_requests %}<tr><td>{{ item.requested_at|date:'d/m/Y H:i' }}</td><td>{{ item.get_environment_display }}</td><td>{{ item.get_trigger_display }}</td><td><span class="status status-{{ item.status }}">{{ item.get_status_display }}</span></td><td>{{ item.result_detail|default:'—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">Nenhuma solicitação foi criada para esta empresa.</p>{% endif %}</section>
 
+  <section class="panel panel-full">
+    <div class="section-heading">
+      <div>
+        <h2>Lotes arquivados</h2>
+        <p>Reprocesse apenas falhas locais a partir da resposta original; esta ação não consulta a SEFAZ.</p>
+      </div>
+    </div>
+    {% if distribution_batches %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Recebido</th><th>cStat</th><th>Documentos</th><th>Processamento</th><th>Detalhe</th><th></th></tr></thead>
+          <tbody>
+            {% for batch in distribution_batches %}
+              <tr>
+                <td>{{ batch.created_at|date:'d/m/Y H:i' }}</td><td>{{ batch.status_code }}</td><td>{{ batch.document_count }}</td>
+                <td><span class="status status-{{ batch.processing_status }}">{{ batch.get_processing_status_display }}</span></td>
+                <td>{{ batch.processing_error|default:batch.reason|default:'—' }}</td>
+                <td>
+                  {% if can_manage and batch.processing_status == 'failed' %}
+                    <form method="post" action="{% url 'batch-reprocess' company.pk batch.pk %}">{% csrf_token %}<button class="button button-secondary" type="submit">Reprocessar localmente</button></form>
+                  {% else %}<span class="quiet">—</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}<p class="quiet">Nenhum retorno de distribuição foi arquivado para esta empresa.</p>{% endif %}
+  </section>
+
   <section class="panel panel-full"><div class="section-heading"><div><h2>Documentos recentes</h2><p>Arquivos disponíveis no volume local de notas.</p></div><a class="table-link" href="{% url 'document-list' %}?q={{ company.tax_identifier }}">Ver todos</a></div>{% if documents %}<div class="table-wrap"><table><thead><tr><th>Chave</th><th>Modelo</th><th>Tipo</th><th>Validação</th><th></th></tr></thead><tbody>{% for document in documents %}<tr><td class="key-cell">{{ document.access_key }}</td><td>{{ document.model }}</td><td>{{ document.get_kind_display }}</td><td><span class="status status-{{ document.validation_status }}">{{ document.get_validation_status_display }}</span></td><td><a class="table-link" href="{% url 'document-download' document.pk %}">Baixar XML</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">Nenhum XML foi distribuído para esta empresa.</p>{% endif %}</section>
 {% endblock %}

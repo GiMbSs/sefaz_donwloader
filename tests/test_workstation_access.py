@@ -4,7 +4,8 @@ import pytest
 from django.urls import reverse
 
 from apps.accounts.models import User
-from apps.fiscal.models import NsuControl, SyncPolicy, SyncRequest
+from apps.fiscal.models import DistributionBatch, NsuControl, SyncPolicy, SyncRequest
+from apps.operations.models import AuditLog
 from apps.organizations.models import AccountingOffice, ClientCompany, OfficeMembership
 
 
@@ -104,3 +105,89 @@ def test_only_office_administrator_can_open_company_registration(client):
     response = client.get(reverse("company-create"))
 
     assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_administrator_can_queue_a_failed_batch_for_local_reprocessing(client):
+    user = User.objects.create_user(
+        email="admin@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    company = ClientCompany.objects.create(
+        office=office,
+        legal_name="Cliente Visível Ltda.",
+        tax_identifier="00000000000191",
+    )
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.ADMIN,
+    )
+    control = NsuControl.objects.create(
+        company=company,
+        environment=NsuControl.Environment.PRODUCTION,
+    )
+    batch = DistributionBatch.objects.create(
+        company=company,
+        nsu_control=control,
+        response_sha256="a" * 64,
+        raw_response_path="_lotes/1/distribution-test.xml",
+        status_code="138",
+        processing_status=DistributionBatch.ProcessingStatus.FAILED,
+        processing_error="Falha local simulada.",
+    )
+    client.force_login(user)
+
+    response = client.post(reverse("batch-reprocess", args=[company.pk, batch.pk]))
+
+    batch.refresh_from_db()
+    assert response.status_code == 302
+    assert batch.processing_status == DistributionBatch.ProcessingStatus.RECEIVED
+    assert AuditLog.objects.filter(
+        actor=user,
+        action="fiscal.distribution_batch_reprocess_requested",
+        target=f"fiscal.distribution_batch:{batch.pk}",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_operator_cannot_queue_a_failed_batch_for_local_reprocessing(client):
+    user = User.objects.create_user(
+        email="operador@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    company = ClientCompany.objects.create(
+        office=office,
+        legal_name="Cliente Visível Ltda.",
+        tax_identifier="00000000000191",
+    )
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.OPERATOR,
+    )
+    control = NsuControl.objects.create(
+        company=company,
+        environment=NsuControl.Environment.PRODUCTION,
+    )
+    batch = DistributionBatch.objects.create(
+        company=company,
+        nsu_control=control,
+        response_sha256="a" * 64,
+        raw_response_path="_lotes/1/distribution-test.xml",
+        status_code="138",
+        processing_status=DistributionBatch.ProcessingStatus.FAILED,
+        processing_error="Falha local simulada.",
+    )
+    client.force_login(user)
+
+    response = client.post(reverse("batch-reprocess", args=[company.pk, batch.pk]))
+
+    batch.refresh_from_db()
+    assert response.status_code == 404
+    assert batch.processing_status == DistributionBatch.ProcessingStatus.FAILED
+    assert not AuditLog.objects.filter(
+        action="fiscal.distribution_batch_reprocess_requested"
+    ).exists()
