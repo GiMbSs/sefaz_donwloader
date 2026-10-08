@@ -27,7 +27,21 @@ Certificados, senhas e chaves privadas nunca devem entrar no repositório, em
 variáveis de exemplo ou em logs.
 
 O proxy publicado em `127.0.0.1` limita uploads a 6 MB; o formulário aceita
-PFX/P12 de até 5 MB. A integração SEFAZ real ainda não é ativada nesta fundação.
+PFX/P12 de até 5 MB. Cada solicitação de sincronização é registrada antes de
+ser enviada ao worker: somente ele abre o certificado, faz a chamada mTLS e
+arquiva o SOAP e o retorno de distribuição. A requisição HTTP nunca consulta a
+SEFAZ diretamente.
+
+Uma tarefa já em execução não é consultada novamente em uma redelivery. Se a
+comunicação ou a persistência do retorno não puder ser confirmada, a solicitação
+falha e o cursor recebe uma espera conservadora de uma hora; não há nova
+consulta automática. Analise o histórico, o lote arquivado e o estado do NSU
+antes de criar uma nova solicitação. Nunca ajuste o NSU manualmente nem use um
+cursor arbitrário para "recuperar" documentos.
+
+A execução em produção continua dependendo de certificado autorizado, ambiente
+correto, volume persistente e teste controlado. Esta implementação não é
+evidência de cobertura de NFC-e ou de operação homologada/produção.
 
 Consulte [o PRD](docs/PRD-IMPLEMENTACAO.md) antes de habilitar qualquer fluxo
 fiscal em ambiente de produção.

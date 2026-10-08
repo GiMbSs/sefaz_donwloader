@@ -1,6 +1,13 @@
 from celery import shared_task
 
+from apps.fiscal.services.execution import execute_sync_request
 from apps.fiscal.services.sync import enqueue_due_synchronizations
+
+
+@shared_task
+def process_sync_request(sync_request_id: int) -> str:
+    """Perform one DF-e consultation exclusively in the fiscal worker."""
+    return execute_sync_request(sync_request_id)
 
 
 @shared_task

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -35,6 +36,7 @@ def request_synchronization(
     trigger: str,
     actor: User | None = None,
     now: datetime | None = None,
+    dispatch: bool = True,
 ) -> SyncRequestSubmission:
     """Create one pending request or return the existing active request.
 
@@ -79,6 +81,8 @@ def request_synchronization(
             .first()
         )
         if existing is not None:
+            if dispatch and existing.status == SyncRequest.Status.QUEUED:
+                transaction.on_commit(_dispatch_sync_request(existing.pk))
             return SyncRequestSubmission(request=existing, created=False)
 
         is_blocked = control.next_allowed_at is not None and control.next_allowed_at > now
@@ -107,18 +111,20 @@ def request_synchronization(
                 "status": request.status,
             },
         )
+        if dispatch and request.status == SyncRequest.Status.QUEUED:
+            transaction.on_commit(_dispatch_sync_request(request.pk))
         return SyncRequestSubmission(request=request, created=True)
 
 
 def enqueue_due_synchronizations(*, now: datetime | None = None) -> int:
     """Queue due daily policies once, regardless of Beat's polling cadence."""
     now = now or timezone.now()
+    queued = _release_waiting_synchronizations(now=now)
     due_policies = SyncPolicy.objects.select_related("company").filter(
         is_active=True,
         company__status=ClientCompany.Status.ACTIVE,
         mode__in=(SyncPolicy.Mode.DAILY, SyncPolicy.Mode.HYBRID),
     )
-    queued = 0
     for policy in due_policies.iterator():
         if not _is_due(policy, now):
             continue
@@ -130,6 +136,58 @@ def enqueue_due_synchronizations(*, now: datetime | None = None) -> int:
         )
         queued += int(submission.created)
     return queued
+
+
+def _release_waiting_synchronizations(*, now: datetime) -> int:
+    """Resume requests only after the persisted SEFAZ wait expires."""
+    released = 0
+    with transaction.atomic():
+        controls = list(
+            NsuControl.objects.select_for_update()
+            .filter(
+                service="nfe_distribution",
+                next_allowed_at__isnull=False,
+                next_allowed_at__lte=now,
+            )
+            .only("pk", "company_id", "environment")
+        )
+        for control in controls:
+            sync_request = (
+                SyncRequest.objects.select_for_update()
+                .filter(
+                    company_id=control.company_id,
+                    environment=control.environment,
+                    status=SyncRequest.Status.WAITING,
+                )
+                .order_by("requested_at")
+                .first()
+            )
+            if sync_request is None:
+                continue
+            sync_request.status = SyncRequest.Status.QUEUED
+            sync_request.result_detail = "Consulta liberada pela janela fiscal."
+            sync_request.save(update_fields=("status", "result_detail"))
+            AuditLog.objects.create(
+                actor=sync_request.requested_by,
+                action="fiscal.sync_request_released",
+                target=f"fiscal.sync_request:{sync_request.pk}",
+                payload={
+                    "company_id": sync_request.company_id,
+                    "environment": sync_request.environment,
+                },
+            )
+            transaction.on_commit(_dispatch_sync_request(sync_request.pk))
+            released += 1
+    return released
+
+
+def _dispatch_sync_request(sync_request_id: int) -> Callable[[], None]:
+    def dispatch() -> None:
+        from apps.fiscal.tasks import process_sync_request
+
+        process_sync_request.delay(sync_request_id)
+
+    return dispatch
 
 
 def _ensure_trigger_allowed(policy: SyncPolicy, trigger: str) -> None:
