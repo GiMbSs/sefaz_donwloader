@@ -12,7 +12,7 @@ from apps.certificates.services.uploads import (
 )
 from apps.fiscal.models import NsuControl, SyncPolicy
 from apps.organizations.models import AccountingOffice, ClientCompany
-
+from apps.organizations.validators import normalize_tax_identifier
 
 WEEKDAY_CHOICES = (
     ("0", "Segunda"),
@@ -26,6 +26,14 @@ WEEKDAY_CHOICES = (
 
 
 class ClientCompanyForm(forms.ModelForm):
+    tax_identifier = forms.CharField(
+        label="CNPJ",
+        max_length=18,
+        widget=forms.TextInput(
+            attrs={"inputmode": "text", "maxlength": 18},
+        ),
+    )
+
     class Meta:
         model = ClientCompany
         fields = (
@@ -55,6 +63,9 @@ class ClientCompanyForm(forms.ModelForm):
         self.fields["office"].queryset = (
             offices if offices is not None else AccountingOffice.objects.none()
         )
+
+    def clean_tax_identifier(self) -> str:
+        return normalize_tax_identifier(self.cleaned_data["tax_identifier"])
 
     def clean_state(self) -> str:
         return self.cleaned_data["state"].strip().upper()

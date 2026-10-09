@@ -290,6 +290,9 @@ autorização é revalidada no servidor.
 ### Fase 6 — expansão planejada
 
 - Pasta de entrada monitorada para XML emitido por ERP.
+- Relatórios TXT de NF-e/NFC-e emitidas por fonte identificada, conforme o
+  [plano de execução](PLANO-RELATORIOS-TXT-EMITIDOS.md). O TXT é complementar
+  e não substitui XML autorizado.
 - API, integrações, notificações e e-mail de recepção.
 - Manifestação assistida, somente após desenho fiscal e jurídico aprovado.
 - Novas UFs por perfil de capacidade e suíte de testes específica.

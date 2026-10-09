@@ -22,6 +22,11 @@ class AccountingOffice(models.Model):
     def __str__(self) -> str:
         return self.legal_name
 
+    def clean_fields(self, exclude=None) -> None:
+        if isinstance(self.tax_identifier, str):
+            self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
+        super().clean_fields(exclude=exclude)
+
     def clean(self) -> None:
         super().clean()
         self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
@@ -116,6 +121,11 @@ class ClientCompany(models.Model):
 
     def __str__(self) -> str:
         return f"{self.legal_name} ({self.tax_identifier})"
+
+    def clean_fields(self, exclude=None) -> None:
+        if isinstance(self.tax_identifier, str):
+            self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
+        super().clean_fields(exclude=exclude)
 
     def clean(self) -> None:
         super().clean()

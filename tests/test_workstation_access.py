@@ -45,11 +45,22 @@ def test_operator_can_only_open_companies_from_their_office(client):
     hidden = client.get(reverse("company-detail", args=[hidden_company.pk]))
 
     assert visible.status_code == 200
+    assert b'value="production"' in visible.content
+    assert b'value="homologation"' in visible.content
     assert hidden.status_code == 404
 
 
 @pytest.mark.django_db
-def test_operator_can_enqueue_a_manual_request_without_exposing_nsu(client):
+@pytest.mark.parametrize(
+    "environment",
+    (
+        NsuControl.Environment.PRODUCTION,
+        NsuControl.Environment.HOMOLOGATION,
+    ),
+)
+def test_operator_can_enqueue_a_manual_request_without_exposing_nsu(
+    client, environment: str
+):
     user = User.objects.create_user(
         email="operador@example.test",
         password="senha-segura",
@@ -74,7 +85,7 @@ def test_operator_can_enqueue_a_manual_request_without_exposing_nsu(client):
 
     response = client.post(
         reverse("company-sync", args=[company.pk]),
-        {"environment": NsuControl.Environment.PRODUCTION},
+        {"environment": environment},
     )
 
     assert response.status_code == 302
@@ -85,7 +96,13 @@ def test_operator_can_enqueue_a_manual_request_without_exposing_nsu(client):
         ).count()
         == 1
     )
-    assert NsuControl.objects.get(company=company).last_nsu == ""
+    assert (
+        NsuControl.objects.get(
+            company=company,
+            environment=environment,
+        ).last_nsu
+        == ""
+    )
 
 
 @pytest.mark.django_db

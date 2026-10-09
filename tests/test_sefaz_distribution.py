@@ -14,6 +14,7 @@ from apps.fiscal.services.sefaz import (
     SefazDistributionError,
     build_dist_nsu_xml,
     build_soap_envelope,
+    endpoint_for,
     extract_distribution_response,
 )
 
@@ -46,10 +47,21 @@ class _Transport:
         return self.response
 
 
-def test_request_uses_validated_dist_nsu_and_soap_12_header():
+@pytest.mark.parametrize(
+    ("environment", "expected_environment_code", "expected_endpoint_prefix"),
+    [
+        ("production", "1", "https://www1.nfe.fazenda.gov.br/"),
+        ("homologation", "2", "https://hom.nfe.fazenda.gov.br/"),
+    ],
+)
+def test_request_uses_the_selected_environment_in_xml_and_endpoint(
+    environment: str,
+    expected_environment_code: str,
+    expected_endpoint_prefix: str,
+):
     request = build_dist_nsu_xml(
         tax_identifier="12ABC34501DE35",
-        environment="homologation",
+        environment=environment,
         last_nsu="42",
     )
     soap = build_soap_envelope(request)
@@ -62,11 +74,16 @@ def test_request_uses_validated_dist_nsu_and_soap_12_header():
 
     assert root.xpath("string(.//wsdl:versaoDados)", namespaces=namespaces) == "1.01"
     assert root.xpath("string(.//wsdl:cUF)", namespaces=namespaces) == "91"
+    assert (
+        root.xpath("string(.//nfe:tpAmb)", namespaces=namespaces)
+        == expected_environment_code
+    )
     assert root.xpath("string(.//nfe:CNPJ)", namespaces=namespaces) == "12ABC34501DE35"
     assert (
         root.xpath("string(.//nfe:ultNSU)", namespaces=namespaces)
         == "000000000000042"
     )
+    assert endpoint_for(environment).startswith(expected_endpoint_prefix)
 
 
 def test_client_extracts_and_validates_the_inner_distribution_response():

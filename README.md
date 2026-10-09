@@ -3,6 +3,21 @@
 Aplicação local para escritórios de contabilidade obterem e organizarem DF-e
 com segurança operacional. A primeira implantação é voltada à Paraíba.
 
+## Desenvolvimento local com SQLite
+
+Para executar comandos Django fora do Docker, ative o ambiente virtual e
+habilite SQLite somente para o perfil de desenvolvimento:
+
+```bash
+export DEV_MODE=True
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py runserver
+```
+
+Isso cria `dev.sqlite3`, que não é versionado. `DEV_MODE` não libera tráfego
+fiscal: mantenha `SEFAZ_ENABLED_ENVIRONMENTS` vazio durante o desenvolvimento.
+Os perfis `container` e `production` não usam essa configuração.
+
 ## Desenvolvimento local com Docker
 
 1. Copie `.env.example` para `.env` e substitua todos os segredos e caminhos

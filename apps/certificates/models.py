@@ -53,7 +53,7 @@ class DigitalCertificate(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=("company",),
-                condition=Q(status=Status.ACTIVE),
+                condition=Q(status="active"),
                 name="one_active_certificate_per_company",
             ),
         ]
