@@ -165,7 +165,7 @@ def _claim_sync_request(
     with transaction.atomic():
         sync_request = (
             SyncRequest.objects.select_for_update()
-            .select_related("company", "requested_by")
+            .select_related("company")
             .filter(pk=sync_request_id)
             .first()
         )
@@ -253,7 +253,6 @@ def _finish_succeeded(
     with transaction.atomic():
         sync_request = (
             SyncRequest.objects.select_for_update()
-            .select_related("requested_by")
             .filter(pk=sync_request_id)
             .first()
         )
@@ -306,7 +305,6 @@ def _finish_failed(
     with transaction.atomic():
         sync_request = (
             SyncRequest.objects.select_for_update()
-            .select_related("requested_by")
             .filter(pk=sync_request_id)
             .first()
         )
@@ -363,7 +361,6 @@ def _finish_request_without_remote_call(
     with transaction.atomic():
         sync_request = (
             SyncRequest.objects.select_for_update()
-            .select_related("requested_by")
             .filter(pk=sync_request_id)
             .first()
         )

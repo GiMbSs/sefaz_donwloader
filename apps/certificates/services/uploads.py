@@ -74,6 +74,11 @@ def stage_certificate_upload(
             .first()
         )
         if active_upload is not None:
+            if dispatch and active_upload.status == CertificateUpload.Status.SUBMITTED:
+                # A worker can stop after the encrypted envelope is committed.
+                # Republishing the same id is safe: the worker claims it under
+                # a row lock and never decrypts a second certificate payload.
+                transaction.on_commit(_dispatch_upload_processing(active_upload.pk))
             return CertificateUploadSubmission(upload=active_upload, created=False)
 
         upload = CertificateUpload(
@@ -134,7 +139,7 @@ def process_certificate_upload(
     with transaction.atomic():
         upload = (
             CertificateUpload.objects.select_for_update()
-            .select_related("company", "uploaded_by")
+            .select_related("company")
             .filter(pk=upload_id)
             .first()
         )
@@ -277,7 +282,7 @@ def expire_staged_certificate_uploads(*, now: datetime | None = None) -> int:
                 ),
                 expires_at__lte=now,
             )
-            .select_related("company", "uploaded_by")
+            .select_related("company")
         )
         for upload in uploads:
             _discard_upload(upload, status=CertificateUpload.Status.EXPIRED, now=now)

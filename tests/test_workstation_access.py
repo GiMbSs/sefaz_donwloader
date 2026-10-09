@@ -238,6 +238,27 @@ def test_administrator_can_stage_certificate_during_company_registration(client)
 
 
 @pytest.mark.django_db
+def test_company_registration_form_submits_certificate_as_multipart(client):
+    user = User.objects.create_user(
+        email="admin@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.ADMIN,
+    )
+    client.force_login(user)
+
+    response = client.get(reverse("company-create"))
+
+    assert response.status_code == 200
+    assert response.context["form"].is_multipart()
+    assert b'enctype="multipart/form-data"' in response.content
+
+
+@pytest.mark.django_db
 def test_administrator_can_set_an_initial_nsu_during_company_registration(client):
     user = User.objects.create_user(
         email="admin@example.test",

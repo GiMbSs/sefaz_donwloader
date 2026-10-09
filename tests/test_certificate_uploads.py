@@ -1,5 +1,6 @@
 import base64
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from cryptography import x509
@@ -109,6 +110,45 @@ def test_staged_upload_only_stores_encrypted_material_and_is_idempotent(tmp_path
     assert AuditLog.objects.filter(action="certificates.upload_staged").count() == 1
 
 
+@pytest.mark.django_db(transaction=True)
+def test_resubmission_requeues_an_unclaimed_certificate_upload(tmp_path):
+    company, user = _company_and_user()
+    private_key = tmp_path / "private.key"
+    public_key = tmp_path / "public.key"
+    generate_upload_keypair(private_key_file=private_key, public_key_file=public_key)
+    envelope = CertificateUploadEnvelope(public_key_file=public_key)
+    first = stage_certificate_upload(
+        company_id=company.pk,
+        filename="empresa.pfx",
+        payload=b"first-encrypted-content",
+        password="senha-secreta",
+        uploaded_by=user,
+        envelope=envelope,
+        dispatch=False,
+    )
+
+    with (
+        override_settings(DEV_MODE=False),
+        patch(
+            "apps.certificates.tasks.process_staged_certificate_upload.delay"
+        ) as dispatch,
+    ):
+        repeated = stage_certificate_upload(
+            company_id=company.pk,
+            filename="empresa.pfx",
+            payload=b"replacement-content-must-not-be-staged",
+            password="outra-senha",
+            uploaded_by=user,
+            envelope=envelope,
+        )
+
+    assert repeated.created is False
+    assert repeated.upload.pk == first.upload.pk
+    dispatch.assert_called_once_with(first.upload.pk)
+    first.upload.refresh_from_db()
+    assert first.upload.status == CertificateUpload.Status.SUBMITTED
+
+
 @pytest.mark.django_db
 def test_expiration_erases_encrypted_material():
     company, user = _company_and_user()
@@ -120,6 +160,7 @@ def test_expiration_erases_encrypted_material():
         uploaded_by=user,
         expires_at=timezone.now() - timedelta(seconds=1),
     )
+    user.delete()
 
     assert expire_staged_certificate_uploads() == 1
 
@@ -173,6 +214,7 @@ def test_worker_stores_hashed_password_and_client_scoped_encrypted_files(tmp_pat
         envelope=web_envelope,
         dispatch=False,
     )
+    user.delete()
 
     assert process_certificate_upload(
         submission.upload.pk,
@@ -183,6 +225,7 @@ def test_worker_stores_hashed_password_and_client_scoped_encrypted_files(tmp_pat
     submission.upload.refresh_from_db()
     certificate = submission.upload.certificate
     assert certificate is not None
+    assert certificate.uploaded_by is None
     assert submission.upload.encrypted_payload is None
     assert submission.upload.encrypted_password is None
     assert certificate.password_hash != password

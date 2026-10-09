@@ -17,7 +17,7 @@
         <span>Inativar a empresa interrompe novas sincronizações. O ambiente não pode ser alterado quando já existir histórico de NSU ou consultas, para preservar a separação fiscal.</span>
       </aside>
     {% endif %}
-    <form method="post" class="form-grid" novalidate>
+    <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>
       {% csrf_token %}
       {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
       {% for field in form %}

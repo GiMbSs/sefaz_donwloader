@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.views import View
 from django.views.generic import ListView, TemplateView
 
-from apps.certificates.models import DigitalCertificate
+from apps.certificates.models import CertificateUpload, DigitalCertificate
 from apps.certificates.services.uploads import (
     CertificateUploadError,
     stage_certificate_upload,
@@ -545,11 +545,18 @@ class CompanyCertificateUploadView(CompanyAccessMixin, View):
                     "Certificado recebido para processamento seguro pelo worker.",
                 )
             else:
-                messages.info(
-                    request,
-                    "Já existe um envio de certificado em processamento para esta "
-                    "empresa.",
-                )
+                if result.upload.status == CertificateUpload.Status.SUBMITTED:
+                    messages.info(
+                        request,
+                        "Já havia um envio de certificado pendente; ele foi "
+                        "recolocado na fila de processamento.",
+                    )
+                else:
+                    messages.info(
+                        request,
+                        "Já existe um envio de certificado em processamento para "
+                        "esta empresa.",
+                    )
         return redirect("company-detail", company_id=company.pk)
 
 
