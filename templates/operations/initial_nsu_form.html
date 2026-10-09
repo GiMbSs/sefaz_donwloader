@@ -1,0 +1,27 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Definir NSU inicial · SEFAZ Downloader{% endblock %}
+{% block page_title %}Definir NSU inicial{% endblock %}
+
+{% block content %}
+  <section class="form-panel">
+    <p class="lede">Continue a distribuição após o último NSU já processado pela contabilidade.</p>
+    <aside class="risk-note">
+      <strong>Configuração única de sequência</strong>
+      <span>O valor informado passa a ser o cursor de {{ company.get_fiscal_environment_display }} para {{ company.legal_name }}. A próxima consulta buscará apenas NSUs posteriores. Depois de criado um pedido fiscal, não será possível editar este ponto de partida.</span>
+    </aside>
+    <form method="post" class="form-grid" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+        <div class="field-group {% if field.name == 'understand_immutable' %}field-wide{% endif %}">
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}
+          {% if field.errors %}<div class="field-error">{{ field.errors }}</div>{% endif %}
+        </div>
+      {% endfor %}
+      <div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Registrar NSU inicial</button></div>
+    </form>
+  </section>
+{% endblock %}

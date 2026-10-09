@@ -21,7 +21,9 @@ def test_dev_mode_uses_the_local_sqlite_database():
                 "from django.conf import settings; "
                 "print(json.dumps({'dev_mode': settings.DEV_MODE, "
                 "'engine': settings.DATABASES['default']['ENGINE'], "
-                "'name': str(settings.DATABASES['default']['NAME'])}))"
+                "'name': str(settings.DATABASES['default']['NAME']), "
+                "'vault_root': str(settings.CERTIFICATE_VAULT_ROOT), "
+                "'public_key': str(settings.CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE)}))"
             ),
         ],
         cwd=project_root,
@@ -36,4 +38,11 @@ def test_dev_mode_uses_the_local_sqlite_database():
         "dev_mode": True,
         "engine": "django.db.backends.sqlite3",
         "name": str(project_root / "dev.sqlite3"),
+        "vault_root": str(Path.home() / ".sefaz_downloader" / "certificates"),
+        "public_key": str(
+            Path.home()
+            / ".sefaz_downloader"
+            / "certificate-public"
+            / "certificate-upload-public.key"
+        ),
     }

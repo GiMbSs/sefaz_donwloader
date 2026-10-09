@@ -12,6 +12,8 @@ from apps.fiscal.services.sefaz import (
 )
 from apps.fiscal.services.storage import FiscalStorage
 from apps.fiscal.services.sync import (
+    InitialNsuConfigurationError,
+    configure_initial_nsu,
     enqueue_due_synchronizations,
     request_synchronization,
 )
@@ -173,6 +175,85 @@ def test_worker_blocks_remote_transport_until_the_environment_is_enabled(setting
         company=company,
         code="sefaz_transport_not_enabled",
     ).exists()
+
+
+@pytest.mark.django_db
+def test_worker_sends_homologation_when_it_is_the_only_enabled_environment(
+    settings, monkeypatch, tmp_path
+):
+    now = timezone.now()
+    company = _company()
+    company.fiscal_environment = ClientCompany.FiscalEnvironment.HOMOLOGATION
+    company.save(update_fields=("fiscal_environment",))
+    _certificate(company, now=now)
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.HOMOLOGATION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+        now=now,
+    )
+    response = _distribution_response().replace(b"<tpAmb>1", b"<tpAmb>2")
+    client = _SuccessfulClient(response)
+    settings.SEFAZ_ENABLED_ENVIRONMENTS = frozenset({"homologation"})
+    monkeypatch.setattr(
+        "apps.fiscal.services.execution.NfeDistributionClient",
+        lambda: client,
+    )
+
+    result = execute_sync_request(
+        submission.request.pk,
+        storage=FiscalStorage(root=tmp_path),
+        now=now,
+    )
+
+    submission.request.refresh_from_db()
+    assert result == SyncRequest.Status.SUCCEEDED
+    assert submission.request.status == SyncRequest.Status.SUCCEEDED
+    assert client.calls[0]["environment"] == NsuControl.Environment.HOMOLOGATION
+
+
+@pytest.mark.django_db
+def test_initial_nsu_is_used_for_the_first_distribution_and_cannot_be_replaced(
+    tmp_path,
+):
+    now = timezone.now()
+    company = _company()
+    company.fiscal_environment = ClientCompany.FiscalEnvironment.HOMOLOGATION
+    company.save(update_fields=("fiscal_environment",))
+    _certificate(company, now=now)
+    control = configure_initial_nsu(
+        company_id=company.pk,
+        environment=NsuControl.Environment.HOMOLOGATION,
+        initial_nsu="12345",
+    )
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.HOMOLOGATION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+        now=now,
+    )
+    response = _distribution_response().replace(b"<tpAmb>1", b"<tpAmb>2")
+    response = response.replace(b"000000000000000", b"000000000012345")
+    client = _SuccessfulClient(response)
+
+    result = execute_sync_request(
+        submission.request.pk,
+        client=client,  # type: ignore[arg-type]
+        storage=FiscalStorage(root=tmp_path),
+        now=now,
+    )
+
+    assert result == SyncRequest.Status.SUCCEEDED
+    assert control.last_nsu == "000000000012345"
+    assert client.calls[0]["last_nsu"] == "000000000012345"
+    with pytest.raises(InitialNsuConfigurationError, match="não pode ser alterado"):
+        configure_initial_nsu(
+            company_id=company.pk,
+            environment=NsuControl.Environment.HOMOLOGATION,
+            initial_nsu="12346",
+        )
 
 
 @pytest.mark.django_db

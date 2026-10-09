@@ -16,6 +16,11 @@ urlpatterns = [
         name="login",
     ),
     path("sair/", auth_views.LogoutView.as_view(), name="logout"),
+    path(
+        "escritorios/novo/",
+        views.OfficeCreateView.as_view(),
+        name="office-create",
+    ),
     path("empresas/", views.CompanyListView.as_view(), name="company-list"),
     path("empresas/nova/", views.CompanyCreateView.as_view(), name="company-create"),
     path(
@@ -37,6 +42,11 @@ urlpatterns = [
         "empresas/<int:company_id>/politica/",
         views.CompanyPolicyUpdateView.as_view(),
         name="company-policy",
+    ),
+    path(
+        "empresas/<int:company_id>/nsu-inicial/",
+        views.CompanyInitialNsuView.as_view(),
+        name="company-initial-nsu",
     ),
     path(
         "empresas/<int:company_id>/certificado/",

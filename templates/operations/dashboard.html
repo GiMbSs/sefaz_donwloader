@@ -45,7 +45,19 @@
           </table>
         </div>
       {% else %}
-        <div class="empty-state"><h3>Nenhuma solicitação ainda</h3><p>Cadastre uma empresa e defina a política de sincronização para iniciar a operação.</p></div>
+        <div class="empty-state">
+          {% if can_create_office and not has_offices %}
+            <h3>Primeiro passo: cadastre o escritório</h3>
+            <p>O escritório é a camada que separa empresas, documentos e certificados.</p>
+            <a class="button button-primary" href="{% url 'office-create' %}">Cadastrar escritório contábil</a>
+          {% elif not can_create_company %}
+            <h3>Nenhuma solicitação ainda</h3>
+            <p>Seu usuário não administra um escritório. Solicite o vínculo necessário ao responsável pela instalação.</p>
+          {% else %}
+            <h3>Nenhuma solicitação ainda</h3>
+            <p>Cadastre uma empresa e defina a política de sincronização para iniciar a operação.</p>
+          {% endif %}
+        </div>
       {% endif %}
     </section>
 

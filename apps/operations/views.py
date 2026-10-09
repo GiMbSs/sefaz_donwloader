@@ -31,15 +31,19 @@ from apps.fiscal.models import (
 from apps.fiscal.services.distribution import request_distribution_batch_reprocessing
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.fiscal.services.sync import (
+    InitialNsuConfigurationError,
     SynchronizationRequestError,
+    configure_initial_nsu,
     request_synchronization,
 )
 from apps.operations.forms import (
+    AccountingOfficeForm,
     AlertResolutionForm,
     CertificateUploadForm,
     ClientCompanyCreateForm,
     ClientCompanyForm,
     CompanyArchiveForm,
+    InitialNsuForm,
     SyncPolicyForm,
 )
 from apps.operations.models import AuditLog, OperationAlert
@@ -48,7 +52,7 @@ from apps.organizations.access import (
     manageable_companies,
     manageable_offices,
 )
-from apps.organizations.models import ClientCompany
+from apps.organizations.models import AccountingOffice, ClientCompany, OfficeMembership
 
 
 def health(request: HttpRequest) -> JsonResponse:
@@ -76,6 +80,9 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         expiry_limit = timezone.now() + timedelta(days=30)
         context.update(
             {
+                "can_create_company": manageable_offices(self.request.user).exists(),
+                "can_create_office": self.request.user.is_superuser,
+                "has_offices": AccountingOffice.objects.exists(),
                 "company_count": companies.count(),
                 "active_company_count": active_company_ids.count(),
                 "blocked_controls": NsuControl.objects.filter(
@@ -129,10 +136,53 @@ class CompanyListView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         context = super().get_context_data(**kwargs)
         context["can_create_company"] = manageable_offices(self.request.user).exists()
+        context["can_create_office"] = self.request.user.is_superuser
+        context["has_offices"] = AccountingOffice.objects.exists()
         context["selected_status"] = self.request.GET.get("status", "")
         context["query"] = self.request.GET.get("q", "")
         context["status_choices"] = ClientCompany.Status.choices
         return context
+
+
+class OfficeCreateView(LoginRequiredMixin, View):
+    """Create an accounting-office tenant during controlled initial setup."""
+
+    template_name = "operations/office_form.html"
+
+    def _ensure_installation_administrator(self, request: HttpRequest) -> None:
+        if not request.user.is_superuser:
+            raise PermissionDenied(
+                "Apenas o administrador da instalação pode criar escritórios."
+            )
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        self._ensure_installation_administrator(request)
+        return render(request, self.template_name, {"form": AccountingOfficeForm()})
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        self._ensure_installation_administrator(request)
+        form = AccountingOfficeForm(request.POST)
+        if not form.is_valid():
+            return render(request, self.template_name, {"form": form}, status=400)
+        with transaction.atomic():
+            office = form.save()
+            OfficeMembership.objects.create(
+                office=office,
+                user=request.user,
+                role=OfficeMembership.Role.ADMIN,
+                is_active=True,
+            )
+            AuditLog.objects.create(
+                actor=request.user,
+                action="organizations.office_created",
+                target=f"organizations.accounting_office:{office.pk}",
+                payload={"tax_identifier": office.tax_identifier},
+            )
+        messages.success(
+            request,
+            "Escritório cadastrado. Agora cadastre a primeira empresa cliente.",
+        )
+        return redirect("company-create")
 
 
 class CompanyAccessMixin(LoginRequiredMixin):
@@ -159,6 +209,18 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         context = super().get_context_data(**kwargs)
         company = self.get_company()
+        can_manage = company.status != ClientCompany.Status.ARCHIVED and (
+            manageable_companies(self.request.user).filter(pk=company.pk).exists()
+        )
+        has_nsu_history = (
+            company.nsu_controls.filter(
+                environment=company.fiscal_environment,
+                service="nfe_distribution",
+            ).exists()
+            or company.sync_requests.filter(
+                environment=company.fiscal_environment
+            ).exists()
+        )
         context.update(
             {
                 "company": company,
@@ -179,8 +241,8 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
                 "distribution_batches": company.distribution_batches.order_by(
                     "-created_at"
                 )[:12],
-                "can_manage": company.status != ClientCompany.Status.ARCHIVED
-                and manageable_companies(self.request.user).filter(pk=company.pk).exists(),
+                "can_manage": can_manage,
+                "can_configure_initial_nsu": can_manage and not has_nsu_history,
             }
         )
         return context
@@ -224,6 +286,14 @@ class CompanyCreateView(LoginRequiredMixin, View):
                     scheduled_time=time(2, 0),
                     is_active=False,
                 )
+                initial_nsu = form.cleaned_data["initial_nsu"]
+                if initial_nsu:
+                    configure_initial_nsu(
+                        company_id=company.pk,
+                        environment=company.fiscal_environment,
+                        initial_nsu=initial_nsu,
+                        actor=request.user,
+                    )
                 certificate_file = form.cleaned_data.get("certificate_file")
                 if certificate_file is not None:
                     stage_certificate_upload(
@@ -255,6 +325,68 @@ class CompanyCreateView(LoginRequiredMixin, View):
             request,
             "Empresa cadastrada. A política automática inicia desativada; "
             "configure-a antes da primeira consulta.",
+        )
+        return redirect("company-detail", company_id=company.pk)
+
+
+class CompanyInitialNsuView(CompanyAccessMixin, View):
+    """Configure a single continuation cursor before fiscal processing starts."""
+
+    template_name = "operations/initial_nsu_form.html"
+    manage_required = True
+
+    @staticmethod
+    def _is_configurable(company: ClientCompany) -> bool:
+        return not (
+            company.nsu_controls.filter(
+                environment=company.fiscal_environment,
+                service="nfe_distribution",
+            ).exists()
+            or company.sync_requests.filter(
+                environment=company.fiscal_environment
+            ).exists()
+        )
+
+    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+        company = self.get_company()
+        if not self._is_configurable(company):
+            raise PermissionDenied(
+                "O NSU inicial só pode ser definido antes da primeira solicitação."
+            )
+        return render(
+            request,
+            self.template_name,
+            {"company": company, "form": InitialNsuForm(company=company)},
+        )
+
+    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+        company = self.get_company()
+        form = InitialNsuForm(request.POST, company=company)
+        if not form.is_valid():
+            return render(
+                request,
+                self.template_name,
+                {"company": company, "form": form},
+                status=400,
+            )
+        try:
+            configure_initial_nsu(
+                company_id=company.pk,
+                environment=company.fiscal_environment,
+                initial_nsu=form.cleaned_data["initial_nsu"],
+                actor=request.user,
+            )
+        except InitialNsuConfigurationError as error:
+            form.add_error("initial_nsu", str(error))
+            return render(
+                request,
+                self.template_name,
+                {"company": company, "form": form},
+                status=400,
+            )
+        messages.success(
+            request,
+            "NSU inicial registrado. A próxima consulta continuará após esse valor.",
         )
         return redirect("company-detail", company_id=company.pk)
 
@@ -434,7 +566,10 @@ class ManualSyncRequestView(CompanyAccessMixin, View):
         except SynchronizationRequestError as error:
             messages.error(request, str(error))
         else:
-            if result.created:
+            result.request.refresh_from_db()
+            if result.request.status == SyncRequest.Status.FAILED:
+                messages.error(request, result.request.result_detail)
+            elif result.created:
                 messages.success(
                     request,
                     "Solicitação incluída na fila de sincronização.",

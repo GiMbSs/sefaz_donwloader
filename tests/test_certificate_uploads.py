@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import NameOID
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -16,6 +17,7 @@ from apps.certificates.services.upload_envelope import (
     generate_upload_keypair,
 )
 from apps.certificates.services.uploads import (
+    CertificateUploadError,
     expire_staged_certificate_uploads,
     process_certificate_upload,
     stage_certificate_upload,
@@ -125,6 +127,25 @@ def test_expiration_erases_encrypted_material():
     assert upload.status == CertificateUpload.Status.EXPIRED
     assert upload.encrypted_payload is None
     assert upload.encrypted_password is None
+
+
+@pytest.mark.django_db
+def test_development_upload_error_explains_how_to_initialize_local_keys(tmp_path):
+    company, user = _company_and_user()
+
+    with override_settings(
+        DEV_MODE=True,
+        CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE=tmp_path / "missing-public.key",
+    ):
+        with pytest.raises(CertificateUploadError, match="cofre local"):
+            stage_certificate_upload(
+                company_id=company.pk,
+                filename="empresa.pfx",
+                payload=b"test-pfx-content",
+                password="senha-secreta",
+                uploaded_by=user,
+                dispatch=False,
+            )
 
 
 @pytest.mark.django_db

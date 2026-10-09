@@ -127,6 +127,64 @@ def test_only_office_administrator_can_open_company_registration(client):
 
 
 @pytest.mark.django_db
+def test_superuser_can_create_first_office_and_is_made_administrator(client):
+    user = User.objects.create_superuser(
+        email="instalacao@example.test",
+        password="senha-segura",
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("office-create"),
+        {
+            "legal_name": "Contabilidade Inicial Ltda.",
+            "tax_identifier": "00.000.000/0001-91",
+        },
+    )
+
+    office = AccountingOffice.objects.get(legal_name="Contabilidade Inicial Ltda.")
+    membership = OfficeMembership.objects.get(office=office, user=user)
+    assert response.status_code == 302
+    assert response.url == reverse("company-create")
+    assert office.tax_identifier == "00000000000191"
+    assert membership.role == OfficeMembership.Role.ADMIN
+    assert membership.is_active is True
+    assert AuditLog.objects.filter(
+        actor=user,
+        action="organizations.office_created",
+        target=f"organizations.accounting_office:{office.pk}",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_company_list_guides_superuser_through_first_office_registration(client):
+    user = User.objects.create_superuser(
+        email="instalacao@example.test",
+        password="senha-segura",
+    )
+    client.force_login(user)
+
+    response = client.get(reverse("company-list"))
+
+    assert response.status_code == 200
+    assert b"Cadastrar escrit\xc3\xb3rio cont\xc3\xa1bil" in response.content
+    assert reverse("office-create").encode() in response.content
+
+
+@pytest.mark.django_db
+def test_non_superuser_cannot_create_an_office(client):
+    user = User.objects.create_user(
+        email="admin-escritorio@example.test",
+        password="senha-segura",
+    )
+    client.force_login(user)
+
+    response = client.get(reverse("office-create"))
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
 def test_administrator_can_stage_certificate_during_company_registration(client):
     user = User.objects.create_user(
         email="admin@example.test",
@@ -177,6 +235,81 @@ def test_administrator_can_stage_certificate_during_company_registration(client)
     ).payload
     assert audit_payload["certificate_staged"] is True
     assert "senha-do-certificado" not in str(audit_payload)
+
+
+@pytest.mark.django_db
+def test_administrator_can_set_an_initial_nsu_during_company_registration(client):
+    user = User.objects.create_user(
+        email="admin@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.ADMIN,
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("company-create"),
+        {
+            "office": office.pk,
+            "legal_name": "Cliente com histórico Ltda.",
+            "tax_identifier": "00000000E08G12",
+            "state_registration": "",
+            "state": "PB",
+            "fiscal_environment": ClientCompany.FiscalEnvironment.HOMOLOGATION,
+            "initial_nsu": "12345",
+            "status": ClientCompany.Status.ACTIVE,
+        },
+    )
+
+    company = ClientCompany.objects.get(legal_name="Cliente com histórico Ltda.")
+    control = NsuControl.objects.get(company=company)
+    assert response.status_code == 302
+    assert control.environment == NsuControl.Environment.HOMOLOGATION
+    assert control.last_nsu == "000000000012345"
+    assert AuditLog.objects.filter(
+        actor=user,
+        action="fiscal.initial_nsu_configured",
+        target=f"fiscal.nsu_control:{control.pk}",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_administrator_can_set_an_initial_nsu_for_an_existing_company(client):
+    user = User.objects.create_user(
+        email="admin@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    company = ClientCompany.objects.create(
+        office=office,
+        legal_name="Cliente existente Ltda.",
+        tax_identifier="00000000E08G12",
+        fiscal_environment=ClientCompany.FiscalEnvironment.HOMOLOGATION,
+    )
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.ADMIN,
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("company-initial-nsu", args=[company.pk]),
+        {
+            "initial_nsu": "987654321",
+            "confirmation_tax_identifier": company.tax_identifier,
+            "understand_immutable": "on",
+        },
+    )
+
+    control = NsuControl.objects.get(company=company)
+    assert response.status_code == 302
+    assert response.url == reverse("company-detail", args=[company.pk])
+    assert control.last_nsu == "000000987654321"
 
 
 @pytest.mark.django_db

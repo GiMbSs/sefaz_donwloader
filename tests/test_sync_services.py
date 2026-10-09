@@ -1,4 +1,5 @@
 from datetime import datetime, time
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -6,10 +7,11 @@ from django.utils import timezone
 from apps.fiscal.models import NsuControl, SyncPolicy, SyncRequest
 from apps.fiscal.services.sync import (
     SynchronizationRequestError,
+    _dispatch_sync_request,
     enqueue_due_synchronizations,
     request_synchronization,
 )
-from apps.operations.models import AuditLog
+from apps.operations.models import AuditLog, OperationAlert
 from apps.organizations.models import AccountingOffice, ClientCompany
 
 
@@ -54,6 +56,42 @@ def test_manual_request_is_idempotent_and_does_not_accept_a_caller_nsu():
 
 
 @pytest.mark.django_db
+def test_queue_publish_failure_finishes_request_without_contacting_sefaz():
+    company = _company()
+    SyncPolicy.objects.create(
+        company=company,
+        mode=SyncPolicy.Mode.HYBRID,
+        scheduled_time=time(2, 0),
+    )
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.PRODUCTION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+    )
+
+    with patch(
+        "apps.fiscal.tasks.process_sync_request.delay",
+        side_effect=RuntimeError("Redis indisponível"),
+    ):
+        _dispatch_sync_request(submission.request.pk)()
+
+    submission.request.refresh_from_db()
+    assert submission.request.status == SyncRequest.Status.FAILED
+    assert "Nenhuma consulta foi enviada à SEFAZ" in submission.request.result_detail
+    assert AuditLog.objects.filter(
+        action="fiscal.sync_request_queue_unavailable",
+        target=f"fiscal.sync_request:{submission.request.pk}",
+    ).exists()
+    alert = OperationAlert.objects.get(
+        company=company,
+        code="sync_queue_unavailable",
+        status=OperationAlert.Status.OPEN,
+    )
+    assert alert.severity == OperationAlert.Severity.CRITICAL
+
+
+@pytest.mark.django_db
 def test_daily_policy_queues_once_inside_its_schedule_window():
     company = _company()
     policy = SyncPolicy.objects.create(
@@ -81,7 +119,10 @@ def test_daily_policy_rejects_manual_trigger():
         scheduled_time=time(2, 0),
     )
 
-    with pytest.raises(SynchronizationRequestError, match="somente sincronização automática"):
+    with pytest.raises(
+        SynchronizationRequestError,
+        match="somente sincronização automática",
+    ):
         request_synchronization(
             company_id=company.pk,
             environment=NsuControl.Environment.PRODUCTION,

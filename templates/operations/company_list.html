@@ -6,7 +6,11 @@
 {% block content %}
   <section class="intro-row">
     <p class="lede">Cadastros, situação e acesso rápido à operação de cada empresa.</p>
-    {% if can_create_company %}<a class="button button-primary" href="{% url 'company-create' %}">Cadastrar empresa</a>{% endif %}
+    {% if can_create_company %}
+      <a class="button button-primary" href="{% url 'company-create' %}">Cadastrar empresa</a>
+    {% elif can_create_office and not has_offices %}
+      <a class="button button-primary" href="{% url 'office-create' %}">Cadastrar escritório contábil</a>
+    {% endif %}
   </section>
   <form class="filter-bar" method="get">
     <div class="filter-field"><label for="id_q">Empresa ou CNPJ</label><input id="id_q" name="q" value="{{ query }}" type="search"></div>
@@ -27,7 +31,19 @@
       </table>
     </div>
   {% else %}
-    <div class="empty-state"><h2>Nenhuma empresa encontrada</h2><p>Altere o filtro ou cadastre a primeira empresa do escritório.</p></div>
+    <div class="empty-state">
+      {% if can_create_office and not has_offices %}
+        <h2>Configure o escritório para começar</h2>
+        <p>O escritório define a separação de dados e é necessário antes do cadastro de empresas clientes.</p>
+        <a class="button button-primary" href="{% url 'office-create' %}">Cadastrar escritório contábil</a>
+      {% elif not can_create_company %}
+        <h2>Nenhuma empresa disponível</h2>
+        <p>Seu usuário ainda não administra um escritório. Solicite um vínculo de administrador ao responsável pela instalação.</p>
+      {% else %}
+        <h2>Nenhuma empresa encontrada</h2>
+        <p>Altere o filtro ou cadastre a primeira empresa do escritório.</p>
+      {% endif %}
+    </div>
   {% endif %}
   {% if is_paginated %}<nav class="pagination" aria-label="Paginação">{% if page_obj.has_previous %}<a href="?q={{ query }}&status={{ selected_status }}&page={{ page_obj.previous_page_number }}">Anterior</a>{% endif %}<span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a href="?q={{ query }}&status={{ selected_status }}&page={{ page_obj.next_page_number }}">Próxima</a>{% endif %}</nav>{% endif %}
 {% endblock %}

@@ -11,6 +11,7 @@ from apps.certificates.services.uploads import (
     validate_certificate_upload_metadata,
 )
 from apps.fiscal.models import SyncPolicy
+from apps.fiscal.services.sync import normalize_initial_nsu
 from apps.organizations.models import AccountingOffice, ClientCompany
 from apps.organizations.validators import normalize_tax_identifier
 
@@ -23,6 +24,26 @@ WEEKDAY_CHOICES = (
     ("5", "Sábado"),
     ("6", "Domingo"),
 )
+
+
+class AccountingOfficeForm(forms.ModelForm):
+    """Initial tenant registration, limited to the installation administrator."""
+
+    tax_identifier = forms.CharField(
+        label="CNPJ do escritório",
+        max_length=18,
+        widget=forms.TextInput(attrs={"inputmode": "text", "maxlength": 18}),
+    )
+
+    class Meta:
+        model = AccountingOffice
+        fields = ("legal_name", "tax_identifier")
+        widgets = {
+            "legal_name": forms.TextInput(attrs={"autocomplete": "organization"}),
+        }
+
+    def clean_tax_identifier(self) -> str:
+        return normalize_tax_identifier(self.cleaned_data["tax_identifier"])
 
 
 class ClientCompanyForm(forms.ModelForm):
@@ -77,6 +98,19 @@ class ClientCompanyForm(forms.ModelForm):
 
 
 class ClientCompanyCreateForm(ClientCompanyForm):
+    initial_nsu = forms.CharField(
+        label="NSU inicial (opcional)",
+        max_length=15,
+        required=False,
+        help_text=(
+            "Último NSU já processado pela contabilidade. O próximo pedido "
+            "buscará somente a sequência posterior e este valor não poderá ser "
+            "alterado depois."
+        ),
+        widget=forms.TextInput(
+            attrs={"inputmode": "numeric", "maxlength": 15, "autocomplete": "off"}
+        ),
+    )
     certificate_file = forms.FileField(
         label="Certificado A1 (opcional)",
         required=False,
@@ -92,6 +126,32 @@ class ClientCompanyCreateForm(ClientCompanyForm):
         strip=False,
         widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
     )
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.order_fields(
+            (
+                "office",
+                "legal_name",
+                "tax_identifier",
+                "state_registration",
+                "state",
+                "fiscal_environment",
+                "initial_nsu",
+                "status",
+                "certificate_file",
+                "certificate_password",
+            )
+        )
+
+    def clean_initial_nsu(self) -> str:
+        value = self.cleaned_data["initial_nsu"]
+        if not value:
+            return ""
+        try:
+            return normalize_initial_nsu(value)
+        except ValueError as error:
+            raise forms.ValidationError(str(error)) from error
 
     def clean_certificate_file(self) -> UploadedFile | None:
         certificate_file = self.cleaned_data.get("certificate_file")
@@ -170,6 +230,50 @@ class CompanyArchiveForm(forms.Form):
     def __init__(self, *args, company: ClientCompany, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.company = company
+
+    def clean_confirmation_tax_identifier(self) -> str:
+        value = normalize_tax_identifier(
+            self.cleaned_data["confirmation_tax_identifier"]
+        )
+        if value != self.company.tax_identifier:
+            raise forms.ValidationError("O CNPJ informado não corresponde à empresa.")
+        return value
+
+
+class InitialNsuForm(forms.Form):
+    initial_nsu = forms.CharField(
+        label="Último NSU já processado",
+        max_length=15,
+        help_text=(
+            "Informe o último NSU concluído no sistema anterior. O próximo "
+            "pedido consultará somente os NSUs posteriores."
+        ),
+        widget=forms.TextInput(
+            attrs={"inputmode": "numeric", "maxlength": 15, "autocomplete": "off"}
+        ),
+    )
+    confirmation_tax_identifier = forms.CharField(
+        label="Confirme o CNPJ da empresa",
+        max_length=18,
+        widget=forms.TextInput(attrs={"autocomplete": "off"}),
+    )
+    understand_immutable = forms.BooleanField(
+        label=(
+            "Entendo que esse NSU inicial será usado uma única vez e não poderá "
+            "ser alterado depois da primeira solicitação."
+        ),
+        required=True,
+    )
+
+    def __init__(self, *args, company: ClientCompany, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.company = company
+
+    def clean_initial_nsu(self) -> str:
+        try:
+            return normalize_initial_nsu(self.cleaned_data["initial_nsu"])
+        except ValueError as error:
+            raise forms.ValidationError(str(error)) from error
 
     def clean_confirmation_tax_identifier(self) -> str:
         value = normalize_tax_identifier(

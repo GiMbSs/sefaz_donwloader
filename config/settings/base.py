@@ -5,6 +5,39 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+
+def _load_project_environment() -> None:
+    """Load simple local settings without allowing them to override real env vars.
+
+    Docker Compose injects its environment before Django starts.  Direct local
+    commands do not, so reading the ignored project ``.env`` here keeps both
+    execution modes consistent while preserving the process environment as the
+    highest-priority source.
+    """
+
+    environment_file = BASE_DIR / ".env"
+    try:
+        lines = environment_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not key.isidentifier():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_project_environment()
+
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
 DEBUG = False
 
@@ -65,7 +98,12 @@ WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
 if os.environ.get("DJANGO_USE_SQLITE") == "1":
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 else:
     DATABASES = {
         "default": {
@@ -80,7 +118,11 @@ else:
     }
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {
+        "NAME": (
+            "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+        )
+    },
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
@@ -94,7 +136,9 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STORAGES = {
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

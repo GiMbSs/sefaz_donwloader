@@ -101,8 +101,14 @@ texto no banco.
 
 ## Cadastro e ciclo de vida da empresa
 
-1. Acesse **Empresas → Cadastrar empresa** como Administrador.
-2. Informe CNPJ, UF, ambiente fiscal e situação.
+1. No primeiro acesso, entre com o superusuário e abra **Empresas → Cadastrar
+   escritório contábil**. Esse passo cria o tenant e vincula o administrador
+   responsável.
+2. Em seguida, o sistema abre **Cadastrar empresa**. Informe CNPJ, UF, ambiente
+   fiscal e situação.
+   - Para empresa que já tem distribuição em outro sistema, informe o último
+     NSU processado. A próxima consulta continuará após ele; o valor é gravado
+     uma única vez, antes de qualquer solicitação fiscal.
    - Use **Homologação** para testes controlados.
    - Use **Produção** apenas para uma empresa autorizada e infraestrutura já
      liberada.
@@ -110,6 +116,11 @@ texto no banco.
 4. Abra a empresa e configure a política de sincronização.
 5. Ative a política somente depois de verificar certificado, ambiente e janela
    operacional.
+
+Para uma empresa já cadastrada sem histórico no sistema, use **Definir NSU
+inicial** na página da empresa antes da primeira solicitação. A tela exige a
+confirmação do CNPJ e o aceite da irreversibilidade para evitar uma consulta
+acidental desde o início da sequência.
 
 Situações disponíveis:
 
@@ -165,12 +176,43 @@ export DEV_MODE=True
 .venv/bin/python manage.py runserver
 ```
 
-Isso cria `dev.sqlite3`, ignorado pelo Git. `DEV_MODE` não libera tráfego
-fiscal; mantenha `SEFAZ_ENABLED_ENVIRONMENTS` vazio durante o desenvolvimento.
+Isso cria `dev.sqlite3` (ignorado pelo Git) e usa por padrão a pasta privada
+`.sefaz_downloader` no perfil do usuário para notas, chaves e cofre local. O
+`.env` é lido pelos comandos diretos, e as variáveis do terminal ainda têm
+prioridade. Defina `DEV_STORAGE_ROOT` se precisar de outro local privado.
+`DEV_MODE` não libera tráfego fiscal por si só. Para uma homologação controlada,
+configure explicitamente `SEFAZ_ENABLED_ENVIRONMENTS=homologation`; não inclua
+`production` nessa variável.
 
-Se `DEV_MODE` estiver apenas em `.env`, um `python manage.py ...` executado
-diretamente não a carrega automaticamente. Exporte a variável como nos exemplos
-acima ou use Docker Compose, que injeta o arquivo `.env` nos containers.
+Antes do primeiro envio de certificado A1 no ambiente local, gere as chaves uma
+única vez:
+
+```bash
+.venv/bin/python manage.py generate_certificate_key --if-missing
+.venv/bin/python manage.py generate_certificate_upload_keypair --if-missing
+```
+
+No PowerShell, use `python` ou `.venv\Scripts\python.exe` com os mesmos
+subcomandos. As chaves ficam no diretório privado de desenvolvimento; não as
+copie para o repositório.
+
+Com `DEV_MODE=True`, o processamento do A1 é executado logo após o commit da
+requisição, sem Redis ou worker. Isso serve apenas para validar o fluxo local;
+as solicitações fiscais continuam a ser executadas exclusivamente pelo worker
+e dependem de uma liberação explícita do ambiente.
+
+Para testar uma solicitação fiscal pelo `runserver` local, inicie o Redis do
+Compose e o worker no mesmo ambiente virtual. A porta do Redis é publicada
+somente em `127.0.0.1`:
+
+```powershell
+docker compose up -d redis
+celery -A config worker --loglevel=INFO
+```
+
+Mantenha os dois processos ativos durante a solicitação. O `runserver` usa por
+padrão `redis://127.0.0.1:6379/0`; não altere essa URL para apontar ao nome de
+serviço `redis`, que só é resolvido entre containers.
 
 ## Instalação local com Docker
 

@@ -26,6 +26,8 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -113,6 +115,7 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       REDIS_URL: redis://redis:6379/0
+      SEFAZ_ENABLED_ENVIRONMENTS: ${SEFAZ_ENABLED_ENVIRONMENTS:-}
       CERTIFICATE_ENCRYPTION_KEY_FILE: ${CERTIFICATE_ENCRYPTION_KEY_FILE:-/dados/certificados/.secrets/certificate-vault.key}
       CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE: ${CERTIFICATE_UPLOAD_PRIVATE_KEY_FILE:-/dados/certificados/.secrets/certificate-upload-private.key}
       CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE: /dados/certificate-public/certificate-upload-public.key

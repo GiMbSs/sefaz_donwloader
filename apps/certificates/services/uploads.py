@@ -95,8 +95,20 @@ def stage_certificate_upload(
                 purpose="password",
             )
         except CertificateUploadEnvelopeError as error:
+            if getattr(settings, "DEV_MODE", False):
+                message = (
+                    "O cofre local de certificados ainda não foi inicializado. "
+                    "Execute `python manage.py generate_certificate_key --if-missing` "
+                    "e `python manage.py generate_certificate_upload_keypair "
+                    "--if-missing`, depois envie o arquivo novamente."
+                )
+            else:
+                message = (
+                    "A chave pública do processamento de certificados não está "
+                    "disponível."
+                )
             raise CertificateUploadError(
-                "A chave pública do processamento de certificados não está disponível."
+                message
             ) from error
         upload.save()
         AuditLog.objects.create(
@@ -310,6 +322,12 @@ def validate_certificate_upload_metadata(
 
 def _dispatch_upload_processing(upload_id: int) -> Callable[[], None]:
     def dispatch() -> None:
+        if getattr(settings, "DEV_MODE", False):
+            # Keep the local A1 setup self-contained without changing the
+            # fiscal worker's queueing semantics or running a SEFAZ request in
+            # the web process.
+            process_certificate_upload(upload_id)
+            return
         from apps.certificates.tasks import process_staged_certificate_upload
 
         process_staged_certificate_upload.delay(upload_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -270,7 +271,10 @@ def _require_private_file(path: Path) -> None:
         raise FiscalPreflightError(
             "um arquivo privado obrigatório está ausente"
         ) from error
-    if mode & 0o077:
+    # Windows ACLs are not represented by the POSIX group/other mode bits.
+    # Keep the strict check in Linux containers (the production target), while
+    # still exercising key presence and cryptographic round-trips on Windows.
+    if os.name != "nt" and mode & 0o077:
         raise FiscalPreflightError(
             "um arquivo privado tem permissões de grupo ou outros"
         )

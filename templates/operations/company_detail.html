@@ -10,7 +10,7 @@
       <p class="muted">Escritório responsável: {{ company.office.legal_name }}</p>
     </div>
     <div class="action-row">
-      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a><a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a><a class="button button-danger" href="{% url 'company-archive' company.pk %}">Excluir (arquivar)</a>{% endif %}
+      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a>{% if can_configure_initial_nsu %}<a class="button button-secondary" href="{% url 'company-initial-nsu' company.pk %}">Definir NSU inicial</a>{% endif %}<a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a><a class="button button-danger" href="{% url 'company-archive' company.pk %}">Excluir (arquivar)</a>{% endif %}
     </div>
   </section>
 
@@ -40,7 +40,7 @@
       <div class="section-heading"><div><h2>Controles NSU</h2><p>Cursores retornados pela SEFAZ, separados por ambiente.</p></div></div>
       {% if nsu_controls %}
         <div class="table-wrap"><table><thead><tr><th>Ambiente</th><th>Último NSU</th><th>Máximo informado</th><th>Situação</th></tr></thead><tbody>{% for control in nsu_controls %}<tr><td>{{ control.get_environment_display }}</td><td>{{ control.last_nsu|default:'—' }}</td><td>{{ control.maximum_nsu|default:'—' }}</td><td>{% if control.next_allowed_at %}<span class="status status-waiting">Liberado {{ control.next_allowed_at|date:'d/m H:i' }}</span>{% else %}<span class="status status-succeeded">Disponível</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-      {% else %}<p class="quiet">O controle será criado na primeira solicitação para cada ambiente.</p>{% endif %}
+      {% else %}<p class="quiet">{% if can_configure_initial_nsu %}A contabilidade já tem histórico? <a href="{% url 'company-initial-nsu' company.pk %}">Defina o último NSU processado</a> antes da primeira solicitação. Caso contrário, o controle será iniciado na primeira consulta.{% else %}O controle será criado na primeira solicitação para cada ambiente.{% endif %}</p>{% endif %}
     </section>
     <aside class="panel panel-side"><div class="section-heading"><div><h2>Próximo passo</h2></div></div>{% if not active_certificate and can_manage %}<p class="quiet">Envie o certificado A1. O navegador o encaminhará cifrado para processamento exclusivo no worker.</p>{% elif not active_certificate %}<p class="quiet">Solicite a uma pessoa administradora o cadastro do certificado A1 desta empresa.</p>{% elif policy and not policy.is_active %}<p class="quiet">Ative a política para permitir novas solicitações.</p>{% else %}<p class="quiet">Acompanhe a fila abaixo; cada retorno arquivado mantém o lote e o XML original.</p>{% endif %}</aside>
   </div>
