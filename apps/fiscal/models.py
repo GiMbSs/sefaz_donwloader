@@ -9,15 +9,27 @@ from apps.organizations.models import ClientCompany
 
 class SyncPolicy(models.Model):
     class Mode(models.TextChoices):
-        DAILY = "daily", "Automática diária"
+        AUTOMATIC = "automatic", "Automática"
         MANUAL = "manual", "Manual"
         HYBRID = "hybrid", "Híbrida"
 
+    class Frequency(models.TextChoices):
+        DAILY = "daily", "Diária"
+        WEEKLY = "weekly", "Semanal"
+        MONTHLY = "monthly", "Mensal"
+
     company = models.OneToOneField(ClientCompany, on_delete=models.CASCADE, related_name="sync_policy")
-    mode = models.CharField("modo", max_length=16, choices=Mode, default=Mode.DAILY)
-    scheduled_time = models.TimeField("horário diário", null=True, blank=True)
+    mode = models.CharField("modo", max_length=16, choices=Mode, default=Mode.AUTOMATIC)
+    frequency = models.CharField(
+        "recorrência",
+        max_length=16,
+        choices=Frequency,
+        default=Frequency.DAILY,
+    )
+    scheduled_time = models.TimeField("horário", null=True, blank=True)
     timezone = models.CharField("fuso horário", max_length=64, default="America/Fortaleza")
-    weekdays = models.JSONField("dias ativos", default=list, blank=True)
+    weekdays = models.JSONField("dias da semana", default=list, blank=True)
+    monthday = models.PositiveSmallIntegerField("dia do mês", default=1)
     is_active = models.BooleanField("ativa", default=True)
     last_requested_at = models.DateTimeField("última solicitação", null=True, blank=True)
     last_finished_at = models.DateTimeField("última conclusão", null=True, blank=True)
@@ -38,14 +50,20 @@ class SyncPolicy(models.Model):
             raise ValidationError(
                 {"timezone": "Informe um fuso horário IANA válido."}
             ) from error
-        if self.mode in {self.Mode.DAILY, self.Mode.HYBRID} and self.scheduled_time is None:
-            raise ValidationError({"scheduled_time": "Informe o horário da sincronização diária."})
+        if self.mode in {self.Mode.AUTOMATIC, self.Mode.HYBRID} and self.scheduled_time is None:
+            raise ValidationError({"scheduled_time": "Informe o horário da sincronização automática."})
         if not isinstance(self.weekdays, list) or any(
             not isinstance(day, int) or day not in range(7) for day in self.weekdays
         ):
             raise ValidationError(
                 {"weekdays": "Use dias da semana entre 0 (segunda) e 6 (domingo)."}
             )
+        if self.frequency == self.Frequency.WEEKLY and not self.weekdays:
+            raise ValidationError(
+                {"weekdays": "Selecione ao menos um dia para a recorrência semanal."}
+            )
+        if not 1 <= self.monthday <= 31:
+            raise ValidationError({"monthday": "Informe um dia entre 1 e 31."})
 
 
 class NsuControl(models.Model):
@@ -72,7 +90,12 @@ class NsuControl(models.Model):
                 name="unique_nsu_control_per_company_environment_service",
             ),
         ]
-        indexes = [models.Index(fields=("next_allowed_at",))]
+        indexes = [
+            models.Index(
+                fields=("next_allowed_at",),
+                name="fiscal_nsuc_next_al_fc24e4_idx",
+            )
+        ]
 
 
 class SyncRequest(models.Model):
@@ -107,7 +130,12 @@ class SyncRequest(models.Model):
     class Meta:
         verbose_name = "solicitação de sincronização"
         verbose_name_plural = "solicitações de sincronização"
-        indexes = [models.Index(fields=("company", "status", "requested_at"))]
+        indexes = [
+            models.Index(
+                fields=("company", "status", "requested_at"),
+                name="fiscal_sync_company_441318_idx",
+            )
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=("company", "environment"),
@@ -161,8 +189,14 @@ class DistributionBatch(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=("company", "created_at")),
-            models.Index(fields=("status_code", "processing_status")),
+            models.Index(
+                fields=("company", "created_at"),
+                name="fiscal_dist_company_2055c1_idx",
+            ),
+            models.Index(
+                fields=("status_code", "processing_status"),
+                name="fiscal_dist_status__d54f0e_idx",
+            ),
         ]
 
 
@@ -205,8 +239,14 @@ class FiscalDocument(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=("company", "model", "kind")),
-            models.Index(fields=("validation_status",)),
+            models.Index(
+                fields=("company", "model", "kind"),
+                name="fiscal_fisc_company_6e246d_idx",
+            ),
+            models.Index(
+                fields=("validation_status",),
+                name="fiscal_fisc_validat_59309c_idx",
+            ),
         ]
 
 
@@ -238,4 +278,4 @@ class DistributionItem(models.Model):
         constraints = [
             models.UniqueConstraint(fields=("batch", "nsu"), name="unique_nsu_per_distribution_batch"),
         ]
-        indexes = [models.Index(fields=("nsu",))]
+        indexes = [models.Index(fields=("nsu",), name="fiscal_dist_nsu_7fb3db_idx")]

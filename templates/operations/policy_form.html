@@ -7,6 +7,10 @@
   <section class="form-panel">
     <p class="lede">{{ company.legal_name }}</p>
     <p class="muted">A política controla quando a fila pode solicitar a distribuição. Ela não permite editar o NSU.</p>
+    <aside class="risk-note">
+      <strong>Execução automática silenciosa</strong>
+      <span>Quando a política estiver ativa, o agendador coloca a consulta na fila no horário definido, sem intervenção na tela. A consulta externa só ocorre se o ambiente da empresa estiver explicitamente liberado na infraestrutura.</span>
+    </aside>
     <form method="post" class="form-grid" novalidate>
       {% csrf_token %}
       {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}

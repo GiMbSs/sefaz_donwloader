@@ -4,45 +4,42 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
-    dependencies = [
-        ('fiscal', '0004_distribution_soap_response'),
-    ]
+    dependencies = [("fiscal", "0004_distribution_soap_response")]
 
     operations = [
         migrations.RenameIndex(
-            model_name='distributionbatch',
-            new_name='fiscal_dist_company_2055c1_idx',
-            old_name='fiscal_dist_company_8e09f4_idx',
+            model_name="distributionbatch",
+            old_name="fiscal_dist_company_8e09f4_idx",
+            new_name="fiscal_dist_company_2055c1_idx",
         ),
         migrations.RenameIndex(
-            model_name='distributionbatch',
-            new_name='fiscal_dist_status__d54f0e_idx',
-            old_name='fiscal_dist_status__bd2d39_idx',
+            model_name="distributionbatch",
+            old_name="fiscal_dist_status__bd2d39_idx",
+            new_name="fiscal_dist_status__d54f0e_idx",
         ),
         migrations.RenameIndex(
-            model_name='distributionitem',
-            new_name='fiscal_dist_nsu_7fb3db_idx',
-            old_name='fiscal_dist_nsu_9db525_idx',
+            model_name="distributionitem",
+            old_name="fiscal_dist_nsu_9db525_idx",
+            new_name="fiscal_dist_nsu_7fb3db_idx",
         ),
         migrations.RenameIndex(
-            model_name='fiscaldocument',
-            new_name='fiscal_fisc_company_6e246d_idx',
-            old_name='fiscal_doc_company_3e08c6_idx',
+            model_name="fiscaldocument",
+            old_name="fiscal_doc_company_3e08c6_idx",
+            new_name="fiscal_fisc_company_6e246d_idx",
         ),
         migrations.RenameIndex(
-            model_name='fiscaldocument',
-            new_name='fiscal_fisc_validat_59309c_idx',
-            old_name='fiscal_doc_validat_50a49d_idx',
+            model_name="fiscaldocument",
+            old_name="fiscal_doc_validat_50a49d_idx",
+            new_name="fiscal_fisc_validat_59309c_idx",
         ),
         migrations.RenameIndex(
-            model_name='nsucontrol',
-            new_name='fiscal_nsuc_next_al_fc24e4_idx',
-            old_name='fiscal_nsuc_next_al_c3502e_idx',
+            model_name="nsucontrol",
+            old_name="fiscal_nsuc_next_al_c3502e_idx",
+            new_name="fiscal_nsuc_next_al_fc24e4_idx",
         ),
         migrations.RenameIndex(
-            model_name='syncrequest',
-            new_name='fiscal_sync_company_441318_idx',
-            old_name='fiscal_sync_company_481d49_idx',
+            model_name="syncrequest",
+            old_name="fiscal_sync_company_481d49_idx",
+            new_name="fiscal_sync_company_441318_idx",
         ),
     ]

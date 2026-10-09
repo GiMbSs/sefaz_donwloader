@@ -28,5 +28,6 @@ def test_company_has_one_policy_and_independent_nsu_by_environment():
         last_nsu="000000000000000",
     )
 
-    assert policy.mode == SyncPolicy.Mode.DAILY
+    assert policy.mode == SyncPolicy.Mode.AUTOMATIC
+    assert policy.frequency == SyncPolicy.Frequency.DAILY
     assert production.pk != homologation.pk

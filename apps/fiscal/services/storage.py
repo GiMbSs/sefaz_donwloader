@@ -6,8 +6,14 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from django.conf import settings
+
+from apps.organizations.storage import company_storage_directory
+
+if TYPE_CHECKING:
+    from apps.organizations.models import ClientCompany
 
 
 class FiscalStorageError(Exception):
@@ -26,23 +32,25 @@ class FiscalStorage:
 
     def write_response(
         self,
-        company_id: int,
+        company_id: int | None,
         response: bytes,
         *,
+        company: ClientCompany | None = None,
         category: str = "distribution",
     ) -> str:
         if category not in {"distribution", "soap"}:
             raise FiscalStorageError("Response storage category is not supported.")
-        relative_path = (
-            Path("_lotes") / str(company_id) / f"{category}-{uuid.uuid4()}.xml"
-        )
+        company_root = self._company_directory(company=company, company_id=company_id)
+        directory = "lotes" if category == "distribution" else "soap"
+        relative_path = company_root / directory / f"{category}-{uuid.uuid4()}.xml"
         self._write(relative_path, response)
         return str(relative_path)
 
     def write_document(
         self,
         *,
-        company_id: int,
+        company_id: int | None,
+        company: ClientCompany | None = None,
         model: str,
         access_key: str,
         kind: str,
@@ -74,7 +82,8 @@ class FiscalStorage:
                 "Document kind requires a safe filename discriminator."
             )
         relative_path = (
-            Path(str(company_id))
+            self._company_directory(company=company, company_id=company_id)
+            / "xmls"
             / f"{issued_year:04d}"
             / f"{issued_month:02d}"
             / model
@@ -82,6 +91,18 @@ class FiscalStorage:
         )
         self._write(relative_path, payload)
         return str(relative_path)
+
+    def _company_directory(
+        self,
+        *,
+        company: ClientCompany | None,
+        company_id: int | None,
+    ) -> Path:
+        if company is not None:
+            return company_storage_directory(company)
+        if company_id is None:
+            raise FiscalStorageError("A company is required for fiscal storage.")
+        return Path(str(company_id))
 
     def delete(self, relative_path: str) -> None:
         """Delete a file created during a failed database transaction."""

@@ -58,8 +58,14 @@ class DigitalCertificate(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=("company", "status")),
-            models.Index(fields=("not_valid_after",)),
+            models.Index(
+                fields=("company", "status"),
+                name="certificate_company_f09d93_idx",
+            ),
+            models.Index(
+                fields=("not_valid_after",),
+                name="certificate_not_val_349f89_idx",
+            ),
         ]
 
     def __str__(self) -> str:

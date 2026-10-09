@@ -26,6 +26,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.certificates.models import DigitalCertificate
+from apps.organizations.storage import company_storage_directory
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -145,27 +146,49 @@ class CertificateVault:
                 "Legacy certificate vault payload cannot be decrypted."
             ) from error
 
-    def _client_directory(self, company_id: int) -> Path:
+    def _client_directory(
+        self,
+        *,
+        company: ClientCompany | None = None,
+        company_id: int | None = None,
+    ) -> Path:
+        """Return a private certificate folder.
+
+        ``company_id`` remains supported only to read/migrate the legacy layout
+        referenced by the historical credential migration.  New registrations
+        always provide the company object and use the tenant-scoped
+        ``empresa_<cnpj>/certificado`` layout.
+        """
+        if company is not None:
+            return self.root / company_storage_directory(company) / "certificado"
+        if company_id is None:
+            raise CertificateVaultError("A company is required for certificate storage.")
         return self.root / "clientes" / str(company_id) / "certificados"
 
     def _path_for(
         self,
         *,
-        company_id: int,
+        company: ClientCompany | None = None,
+        company_id: int | None = None,
         storage_id: object,
         purpose: str,
     ) -> Path:
         suffix = "pfx.enc" if purpose == "pfx" else "password.enc"
-        return self._client_directory(company_id) / f"{storage_id}.{suffix}"
+        return (
+            self._client_directory(company=company, company_id=company_id)
+            / f"{storage_id}.{suffix}"
+        )
 
     def store_certificate(
         self,
         *,
-        company_id: int,
+        company: ClientCompany | None = None,
+        company_id: int | None = None,
         storage_id: object,
         payload: bytes,
     ) -> str:
         return self._store(
+            company=company,
             company_id=company_id,
             storage_id=storage_id,
             payload=payload,
@@ -175,11 +198,13 @@ class CertificateVault:
     def store_password(
         self,
         *,
-        company_id: int,
+        company: ClientCompany | None = None,
+        company_id: int | None = None,
         storage_id: object,
         password: str,
     ) -> str:
         return self._store(
+            company=company,
             company_id=company_id,
             storage_id=storage_id,
             payload=password.encode("utf-8"),
@@ -189,12 +214,14 @@ class CertificateVault:
     def _store(
         self,
         *,
-        company_id: int,
+        company: ClientCompany | None,
+        company_id: int | None,
         storage_id: object,
         payload: bytes,
         purpose: str,
     ) -> str:
         target = self._path_for(
+            company=company,
             company_id=company_id,
             storage_id=storage_id,
             purpose=purpose,
@@ -377,12 +404,12 @@ def register_certificate(
     )
     try:
         certificate.encrypted_path = vault.store_certificate(
-            company_id=company.pk,
+            company=company,
             storage_id=certificate.storage_id,
             payload=payload,
         )
         certificate.encrypted_password_path = vault.store_password(
-            company_id=company.pk,
+            company=company,
             storage_id=certificate.storage_id,
             password=password,
         )

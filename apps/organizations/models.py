@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from .validators import normalize_tax_identifier, validate_tax_identifier
@@ -79,8 +80,12 @@ class OfficeMembership(models.Model):
 class ClientCompany(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Ativa"
-        PAUSED = "paused", "Pausada"
+        INACTIVE = "inactive", "Inativa"
         ARCHIVED = "archived", "Arquivada"
+
+    class FiscalEnvironment(models.TextChoices):
+        PRODUCTION = "production", "Produção"
+        HOMOLOGATION = "homologation", "Homologação"
 
     office = models.ForeignKey(
         AccountingOffice,
@@ -99,6 +104,12 @@ class ClientCompany(models.Model):
         blank=True,
     )
     state = models.CharField("UF", max_length=2, default="PB")
+    fiscal_environment = models.CharField(
+        "ambiente fiscal",
+        max_length=16,
+        choices=FiscalEnvironment,
+        default=FiscalEnvironment.HOMOLOGATION,
+    )
     status = models.CharField(
         "situação",
         max_length=16,
@@ -117,7 +128,12 @@ class ClientCompany(models.Model):
                 name="unique_company_tax_identifier_per_office",
             ),
         ]
-        indexes = [models.Index(fields=("office", "status"))]
+        indexes = [
+            models.Index(
+                fields=("office", "status"),
+                name="organizatio_office__26c3f5_idx",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"{self.legal_name} ({self.tax_identifier})"
@@ -130,3 +146,27 @@ class ClientCompany(models.Model):
     def clean(self) -> None:
         super().clean()
         self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
+        if self.pk is None:
+            return
+        previous_environment = (
+            type(self)
+            .objects.filter(pk=self.pk)
+            .values_list("fiscal_environment", flat=True)
+            .first()
+        )
+        if (
+            previous_environment
+            and previous_environment != self.fiscal_environment
+            and (
+                self.nsu_controls.exists()
+                or self.sync_requests.exists()
+            )
+        ):
+            raise ValidationError(
+                {
+                    "fiscal_environment": (
+                        "O ambiente não pode ser alterado após iniciar o histórico "
+                        "fiscal. Cadastre uma empresa de teste separada."
+                    )
+                }
+            )

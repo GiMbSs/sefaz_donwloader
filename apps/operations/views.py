@@ -37,8 +37,9 @@ from apps.fiscal.services.sync import (
 from apps.operations.forms import (
     AlertResolutionForm,
     CertificateUploadForm,
+    ClientCompanyCreateForm,
     ClientCompanyForm,
-    ManualSyncRequestForm,
+    CompanyArchiveForm,
     SyncPolicyForm,
 )
 from apps.operations.models import AuditLog, OperationAlert
@@ -121,6 +122,8 @@ class CompanyListView(LoginRequiredMixin, ListView):
             )
         if status in ClientCompany.Status.values:
             queryset = queryset.filter(status=status)
+        else:
+            queryset = queryset.exclude(status=ClientCompany.Status.ARCHIVED)
         return queryset.order_by("legal_name")
 
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
@@ -141,10 +144,13 @@ class CompanyAccessMixin(LoginRequiredMixin):
             if self.manage_required
             else accessible_companies(self.request.user)
         )
-        return get_object_or_404(
+        company = get_object_or_404(
             queryset.select_related("office"),
             pk=self.kwargs["company_id"],
         )
+        if self.manage_required and company.status == ClientCompany.Status.ARCHIVED:
+            raise PermissionDenied("A empresa está arquivada para a operação diária.")
+        return company
 
 
 class CompanyDetailView(CompanyAccessMixin, TemplateView):
@@ -173,10 +179,8 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
                 "distribution_batches": company.distribution_batches.order_by(
                     "-created_at"
                 )[:12],
-                "manual_sync_form": ManualSyncRequestForm(),
-                "can_manage": manageable_companies(self.request.user)
-                .filter(pk=company.pk)
-                .exists(),
+                "can_manage": company.status != ClientCompany.Status.ARCHIVED
+                and manageable_companies(self.request.user).filter(pk=company.pk).exists(),
             }
         )
         return context
@@ -195,14 +199,14 @@ class CompanyCreateView(LoginRequiredMixin, View):
         return render(
             request,
             self.template_name,
-            {"form": ClientCompanyForm(offices=offices), "is_create": True},
+            {"form": ClientCompanyCreateForm(offices=offices), "is_create": True},
         )
 
     def post(self, request: HttpRequest) -> HttpResponse:
         offices = self._offices()
         if not offices.exists():
             raise PermissionDenied("Seu perfil não administra nenhum escritório.")
-        form = ClientCompanyForm(request.POST, offices=offices)
+        form = ClientCompanyCreateForm(request.POST, request.FILES, offices=offices)
         if not form.is_valid():
             return render(
                 request,
@@ -210,23 +214,47 @@ class CompanyCreateView(LoginRequiredMixin, View):
                 {"form": form, "is_create": True},
                 status=400,
             )
-        with transaction.atomic():
-            company = form.save()
-            SyncPolicy.objects.create(
-                company=company,
-                mode=SyncPolicy.Mode.HYBRID,
-                scheduled_time=time(2, 0),
-            )
-            AuditLog.objects.create(
-                actor=request.user,
-                action="organizations.company_created",
-                target=f"organizations.client_company:{company.pk}",
-                payload={"office_id": company.office_id},
+        try:
+            with transaction.atomic():
+                company = form.save()
+                SyncPolicy.objects.create(
+                    company=company,
+                    mode=SyncPolicy.Mode.HYBRID,
+                    frequency=SyncPolicy.Frequency.DAILY,
+                    scheduled_time=time(2, 0),
+                    is_active=False,
+                )
+                certificate_file = form.cleaned_data.get("certificate_file")
+                if certificate_file is not None:
+                    stage_certificate_upload(
+                        company_id=company.pk,
+                        filename=certificate_file.name,
+                        payload=certificate_file.read(),
+                        password=form.cleaned_data["certificate_password"],
+                        uploaded_by=request.user,
+                    )
+                AuditLog.objects.create(
+                    actor=request.user,
+                    action="organizations.company_created",
+                    target=f"organizations.client_company:{company.pk}",
+                    payload={
+                        "office_id": company.office_id,
+                        "environment": company.fiscal_environment,
+                        "certificate_staged": certificate_file is not None,
+                    },
+                )
+        except CertificateUploadError as error:
+            form.add_error("certificate_file", str(error))
+            return render(
+                request,
+                self.template_name,
+                {"form": form, "is_create": True},
+                status=400,
             )
         messages.success(
             request,
-            "Empresa cadastrada. Configure a política e o certificado antes da "
-            "primeira consulta.",
+            "Empresa cadastrada. A política automática inicia desativada; "
+            "configure-a antes da primeira consulta.",
         )
         return redirect("company-detail", company_id=company.pk)
 
@@ -263,13 +291,19 @@ class CompanyUpdateView(CompanyAccessMixin, View):
                 {"form": form, "company": company},
                 status=400,
             )
+        changed_fields = sorted(form.changed_data)
         with transaction.atomic():
             company = form.save()
             AuditLog.objects.create(
                 actor=request.user,
                 action="organizations.company_updated",
                 target=f"organizations.client_company:{company.pk}",
-                payload={"office_id": company.office_id},
+                payload={
+                    "office_id": company.office_id,
+                    "changed_fields": changed_fields,
+                    "environment": company.fiscal_environment,
+                    "status": company.status,
+                },
             )
         messages.success(request, "Cadastro da empresa atualizado.")
         return redirect("company-detail", company_id=company.pk)
@@ -283,7 +317,12 @@ class CompanyPolicyUpdateView(CompanyAccessMixin, View):
         company = self.get_company()
         policy, _ = SyncPolicy.objects.get_or_create(
             company=company,
-            defaults={"mode": SyncPolicy.Mode.HYBRID, "scheduled_time": time(2, 0)},
+            defaults={
+                "mode": SyncPolicy.Mode.HYBRID,
+                "frequency": SyncPolicy.Frequency.DAILY,
+                "scheduled_time": time(2, 0),
+                "is_active": False,
+            },
         )
         return policy
 
@@ -314,6 +353,7 @@ class CompanyPolicyUpdateView(CompanyAccessMixin, View):
                 payload={
                     "company_id": policy.company_id,
                     "mode": policy.mode,
+                    "frequency": policy.frequency,
                     "is_active": policy.is_active,
                 },
             )
@@ -384,14 +424,10 @@ class CompanyCertificateUploadView(CompanyAccessMixin, View):
 class ManualSyncRequestView(CompanyAccessMixin, View):
     def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
-        form = ManualSyncRequestForm(request.POST)
-        if not form.is_valid():
-            messages.error(request, "Escolha um ambiente fiscal válido.")
-            return redirect("company-detail", company_id=company.pk)
         try:
             result = request_synchronization(
                 company_id=company.pk,
-                environment=form.cleaned_data["environment"],
+                environment=company.fiscal_environment,
                 trigger=SyncRequest.Trigger.MANUAL,
                 actor=request.user,
             )
@@ -409,6 +445,57 @@ class ManualSyncRequestView(CompanyAccessMixin, View):
                     "Já existe uma solicitação ativa para este ambiente.",
                 )
         return redirect("company-detail", company_id=company.pk)
+
+
+class CompanyArchiveView(CompanyAccessMixin, View):
+    """Archive a company after an explicit retention acknowledgement.
+
+    Fiscal records are legal evidence, so this is deliberately not a physical
+    database or filesystem delete.  The archived company disappears from normal
+    active operations and its policy is disabled.
+    """
+
+    template_name = "operations/company_archive_confirm.html"
+    manage_required = True
+
+    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+        company = self.get_company()
+        return render(
+            request,
+            self.template_name,
+            {"company": company, "form": CompanyArchiveForm(company=company)},
+        )
+
+    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+        company = self.get_company()
+        form = CompanyArchiveForm(request.POST, company=company)
+        if not form.is_valid():
+            return render(
+                request,
+                self.template_name,
+                {"company": company, "form": form},
+                status=400,
+            )
+        with transaction.atomic():
+            company.status = ClientCompany.Status.ARCHIVED
+            company.save(update_fields=("status", "updated_at"))
+            SyncPolicy.objects.filter(company=company).update(is_active=False)
+            AuditLog.objects.create(
+                actor=request.user,
+                action="organizations.company_archived",
+                target=f"organizations.client_company:{company.pk}",
+                payload={
+                    "office_id": company.office_id,
+                    "tax_identifier": company.tax_identifier,
+                    "reason": "explicit_retention_acknowledgement",
+                },
+            )
+        messages.warning(
+            request,
+            "Empresa arquivada. Os arquivos e evidências fiscais foram preservados; "
+            "a política automática foi desativada.",
+        )
+        return redirect("company-list")
 
 
 class DistributionBatchReprocessView(CompanyAccessMixin, View):

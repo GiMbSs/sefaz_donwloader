@@ -16,7 +16,8 @@ emissor de notas.
 
 - Baixar e preservar XMLs de NF-e e, após validação em campo, NFC-e para cada
   empresa cliente.
-- Permitir sincronização automática diária, manual ou híbrida por empresa.
+- Permitir sincronização automática diária, semanal ou mensal, manual ou híbrida
+  por empresa.
 - Controlar NSU de forma segura, detectar inconsistências e alertar o escritório
   sem causar consumo indevido na SEFAZ.
 - Compartilhar os XMLs baixados em pasta do computador hospedeiro, fora do
@@ -76,8 +77,9 @@ emissor de notas.
 
 Cada empresa terá uma `PoliticaSincronizacao` com:
 
-- modo: `AUTOMATICA_DIARIA`, `MANUAL` ou `HIBRIDA`;
-- horário, fuso horário, dias ativos, estado ativo/pausado e tentativas;
+- modo: `AUTOMATICA`, `MANUAL` ou `HIBRIDA`;
+- recorrência diária, semanal ou mensal, horário, fuso horário, dias ativos,
+  dia mensal, estado ativo/inativo e tentativas;
 - última execução, próxima execução desejada e próxima consulta permitida pela
   SEFAZ;
 - último resultado, contador de falhas e destinatários de alertas.
@@ -139,7 +141,8 @@ e ainda permitir a assinatura automática, o sistema deve:
 
 1. Persistir no banco somente `password_hash`, produzido pelos hashers do Django.
 2. Cifrar o arquivo PFX e a credencial recuperável com criptografia autenticada
-   em arquivos privados de `clientes/<id-da-empresa>/certificados/`.
+   em arquivos privados de
+   `escritorios/escritorio_<cnpj>/empresa_<cnpj>/certificado/`.
 3. Manter a chave mestra fora do banco, do código e da imagem Docker, injetada
    como segredo protegido no host.
 4. Montar certificados somente para o worker; nunca em `MEDIA_URL`, logs,
@@ -181,8 +184,8 @@ produção, usar proxy HTTPS e configurações de segurança do Django.
 ### Volumes
 
 - `NOTES_HOST_DIR:/dados/notas`: bind mount de escrita do worker e leitura
-  controlada pelo web; contém XMLs baixados e estrutura previsível por empresa,
-  período, modelo e chave de acesso.
+  controlada pelo web; contém `empresa_<cnpj>/xmls`, `lotes`, `soap` e a reserva
+  `txt`, sempre abaixo do escopo do escritório.
 - `CERTIFICATES_HOST_DIR:/dados/certificados`: volume privado, cifrado e sem
   acesso HTTP direto.
 - volume nomeado do PostgreSQL: não substitui backups.

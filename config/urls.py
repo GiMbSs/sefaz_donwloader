@@ -29,6 +29,11 @@ urlpatterns = [
         name="company-update",
     ),
     path(
+        "empresas/<int:company_id>/excluir/",
+        views.CompanyArchiveView.as_view(),
+        name="company-archive",
+    ),
+    path(
         "empresas/<int:company_id>/politica/",
         views.CompanyPolicyUpdateView.as_view(),
         name="company-policy",

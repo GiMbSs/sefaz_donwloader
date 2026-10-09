@@ -166,11 +166,11 @@ def test_worker_stores_hashed_password_and_client_scoped_encrypted_files(tmp_pat
     assert submission.upload.encrypted_password is None
     assert certificate.password_hash != password
     assert password not in certificate.password_hash
-    assert certificate.encrypted_path.startswith(
-        f"clientes/{company.pk}/certificados/"
+    expected_prefix = (
+        f"escritorios/escritorio_{company.office.tax_identifier}/"
+        f"empresa_{company.tax_identifier}/certificado/"
     )
-    assert certificate.encrypted_password_path.startswith(
-        f"clientes/{company.pk}/certificados/"
-    )
+    assert certificate.encrypted_path.startswith(expected_prefix)
+    assert certificate.encrypted_password_path.startswith(expected_prefix)
     assert vault.load(certificate) == payload
     assert vault.unseal_password(certificate) == password

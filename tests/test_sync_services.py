@@ -21,6 +21,7 @@ def _company() -> ClientCompany:
         office=office,
         legal_name="Cliente Exemplo Ltda.",
         tax_identifier="00000000000191",
+        fiscal_environment=ClientCompany.FiscalEnvironment.PRODUCTION,
     )
 
 
@@ -57,7 +58,7 @@ def test_daily_policy_queues_once_inside_its_schedule_window():
     company = _company()
     policy = SyncPolicy.objects.create(
         company=company,
-        mode=SyncPolicy.Mode.DAILY,
+        mode=SyncPolicy.Mode.AUTOMATIC,
         scheduled_time=time(2, 0),
         timezone="America/Fortaleza",
         weekdays=[1],
@@ -76,13 +77,68 @@ def test_daily_policy_rejects_manual_trigger():
     company = _company()
     SyncPolicy.objects.create(
         company=company,
-        mode=SyncPolicy.Mode.DAILY,
+        mode=SyncPolicy.Mode.AUTOMATIC,
         scheduled_time=time(2, 0),
     )
 
-    with pytest.raises(SynchronizationRequestError, match="somente sincronização diária"):
+    with pytest.raises(SynchronizationRequestError, match="somente sincronização automática"):
         request_synchronization(
             company_id=company.pk,
             environment=NsuControl.Environment.PRODUCTION,
+            trigger=SyncRequest.Trigger.MANUAL,
+        )
+
+
+@pytest.mark.django_db
+def test_weekly_policy_uses_company_environment_and_queues_once_per_week():
+    company = _company()
+    policy = SyncPolicy.objects.create(
+        company=company,
+        mode=SyncPolicy.Mode.AUTOMATIC,
+        frequency=SyncPolicy.Frequency.WEEKLY,
+        scheduled_time=time(2, 0),
+        timezone="America/Fortaleza",
+        weekdays=[2],
+    )
+    now = timezone.make_aware(datetime(2026, 10, 7, 2, 10))
+
+    assert enqueue_due_synchronizations(now=now) == 1
+    assert enqueue_due_synchronizations(now=now) == 0
+
+    request = SyncRequest.objects.get(company=company)
+    assert request.environment == ClientCompany.FiscalEnvironment.PRODUCTION
+    policy.refresh_from_db()
+    assert policy.last_requested_at == now
+
+
+@pytest.mark.django_db
+def test_monthly_policy_uses_last_calendar_day_when_configured_day_is_unavailable():
+    company = _company()
+    SyncPolicy.objects.create(
+        company=company,
+        mode=SyncPolicy.Mode.AUTOMATIC,
+        frequency=SyncPolicy.Frequency.MONTHLY,
+        scheduled_time=time(2, 0),
+        timezone="America/Fortaleza",
+        monthday=31,
+    )
+    last_day_of_february = timezone.make_aware(datetime(2026, 2, 28, 2, 10))
+
+    assert enqueue_due_synchronizations(now=last_day_of_february) == 1
+
+
+@pytest.mark.django_db
+def test_request_rejects_an_environment_other_than_the_company_configuration():
+    company = _company()
+    SyncPolicy.objects.create(
+        company=company,
+        mode=SyncPolicy.Mode.HYBRID,
+        scheduled_time=time(2, 0),
+    )
+
+    with pytest.raises(SynchronizationRequestError, match="ambiente definido"):
+        request_synchronization(
+            company_id=company.pk,
+            environment=NsuControl.Environment.HOMOLOGATION,
             trigger=SyncRequest.Trigger.MANUAL,
         )

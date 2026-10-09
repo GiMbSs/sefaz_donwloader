@@ -28,6 +28,7 @@ def _company() -> ClientCompany:
         office=office,
         legal_name="Cliente Exemplo Ltda.",
         tax_identifier="00000000000191",
+        fiscal_environment=ClientCompany.FiscalEnvironment.PRODUCTION,
     )
     SyncPolicy.objects.create(
         company=company,

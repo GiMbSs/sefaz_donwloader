@@ -10,7 +10,7 @@ from apps.certificates.services.uploads import (
     CertificateUploadError,
     validate_certificate_upload_metadata,
 )
-from apps.fiscal.models import NsuControl, SyncPolicy
+from apps.fiscal.models import SyncPolicy
 from apps.organizations.models import AccountingOffice, ClientCompany
 from apps.organizations.validators import normalize_tax_identifier
 
@@ -42,6 +42,7 @@ class ClientCompanyForm(forms.ModelForm):
             "tax_identifier",
             "state_registration",
             "state",
+            "fiscal_environment",
             "status",
         )
         widgets = {
@@ -63,12 +64,60 @@ class ClientCompanyForm(forms.ModelForm):
         self.fields["office"].queryset = (
             offices if offices is not None else AccountingOffice.objects.none()
         )
+        self.fields["status"].choices = (
+            (ClientCompany.Status.ACTIVE, ClientCompany.Status.ACTIVE.label),
+            (ClientCompany.Status.INACTIVE, ClientCompany.Status.INACTIVE.label),
+        )
 
     def clean_tax_identifier(self) -> str:
         return normalize_tax_identifier(self.cleaned_data["tax_identifier"])
 
     def clean_state(self) -> str:
         return self.cleaned_data["state"].strip().upper()
+
+
+class ClientCompanyCreateForm(ClientCompanyForm):
+    certificate_file = forms.FileField(
+        label="Certificado A1 (opcional)",
+        required=False,
+        help_text="Arquivo .pfx ou .p12 de até 5 MB; será validado pelo worker.",
+        widget=forms.ClearableFileInput(
+            attrs={"accept": ".pfx,.p12,application/x-pkcs12"}
+        ),
+    )
+    certificate_password = forms.CharField(
+        label="Senha do certificado",
+        max_length=1024,
+        required=False,
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+    )
+
+    def clean_certificate_file(self) -> UploadedFile | None:
+        certificate_file = self.cleaned_data.get("certificate_file")
+        if certificate_file is None:
+            return None
+        try:
+            validate_certificate_upload_metadata(
+                filename=certificate_file.name,
+                payload_size=certificate_file.size,
+                password="valid-for-size-check",
+            )
+        except CertificateUploadError as error:
+            raise forms.ValidationError(str(error)) from error
+        return certificate_file
+
+    def clean(self) -> dict[str, object]:
+        cleaned_data = super().clean()
+        certificate_file = cleaned_data.get("certificate_file")
+        password = cleaned_data.get("certificate_password")
+        if bool(certificate_file) != bool(password):
+            message = "Informe o arquivo e a senha do certificado juntos."
+            if certificate_file:
+                self.add_error("certificate_password", message)
+            else:
+                self.add_error("certificate_file", message)
+        return cleaned_data
 
 
 class SyncPolicyForm(forms.ModelForm):
@@ -82,7 +131,15 @@ class SyncPolicyForm(forms.ModelForm):
 
     class Meta:
         model = SyncPolicy
-        fields = ("mode", "scheduled_time", "timezone", "weekdays", "is_active")
+        fields = (
+            "mode",
+            "frequency",
+            "scheduled_time",
+            "timezone",
+            "weekdays",
+            "monthday",
+            "is_active",
+        )
         widgets = {
             "scheduled_time": forms.TimeInput(attrs={"type": "time"}),
             "timezone": forms.TextInput(attrs={"autocomplete": "off"}),
@@ -96,12 +153,31 @@ class SyncPolicyForm(forms.ModelForm):
         return [int(day) for day in self.cleaned_data["weekdays"]]
 
 
-class ManualSyncRequestForm(forms.Form):
-    environment = forms.ChoiceField(
-        label="Ambiente",
-        choices=NsuControl.Environment.choices,
-        initial=NsuControl.Environment.PRODUCTION,
+class CompanyArchiveForm(forms.Form):
+    confirmation_tax_identifier = forms.CharField(
+        label="Confirme o CNPJ da empresa",
+        max_length=18,
+        widget=forms.TextInput(attrs={"autocomplete": "off"}),
     )
+    understand_retention = forms.BooleanField(
+        label=(
+            "Entendo que a exclusão arquiva o cadastro e preserva arquivos e "
+            "evidências fiscais pelo prazo de retenção."
+        ),
+        required=True,
+    )
+
+    def __init__(self, *args, company: ClientCompany, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.company = company
+
+    def clean_confirmation_tax_identifier(self) -> str:
+        value = normalize_tax_identifier(
+            self.cleaned_data["confirmation_tax_identifier"]
+        )
+        if value != self.company.tax_identifier:
+            raise forms.ValidationError("O CNPJ informado não corresponde à empresa.")
+        return value
 
 
 class AlertResolutionForm(forms.Form):

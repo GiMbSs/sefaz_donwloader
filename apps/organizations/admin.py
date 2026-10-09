@@ -11,8 +11,15 @@ class AccountingOfficeAdmin(admin.ModelAdmin):
 
 @admin.register(ClientCompany)
 class ClientCompanyAdmin(admin.ModelAdmin):
-    list_display = ("legal_name", "tax_identifier", "state", "status", "office")
-    list_filter = ("state", "status")
+    list_display = (
+        "legal_name",
+        "tax_identifier",
+        "state",
+        "fiscal_environment",
+        "status",
+        "office",
+    )
+    list_filter = ("state", "fiscal_environment", "status")
     search_fields = ("legal_name", "tax_identifier")
     list_select_related = ("office",)
 

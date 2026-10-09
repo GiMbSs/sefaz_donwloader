@@ -16,11 +16,11 @@
   {% if companies %}
     <div class="table-wrap primary-table">
       <table>
-        <thead><tr><th>Empresa</th><th>CNPJ</th><th>UF</th><th>Escritório</th><th>Situação</th><th></th></tr></thead>
+        <thead><tr><th>Empresa</th><th>CNPJ</th><th>UF</th><th>Ambiente</th><th>Escritório</th><th>Situação</th><th></th></tr></thead>
         <tbody>
           {% for company in companies %}
             <tr>
-              <td><strong>{{ company.legal_name }}</strong></td><td>{{ company.tax_identifier }}</td><td>{{ company.state }}</td><td>{{ company.office.legal_name }}</td><td><span class="status status-{{ company.status }}">{{ company.get_status_display }}</span></td><td><a class="table-link" href="{% url 'company-detail' company.pk %}">Abrir</a></td>
+              <td><strong>{{ company.legal_name }}</strong></td><td>{{ company.tax_identifier }}</td><td>{{ company.state }}</td><td>{{ company.get_fiscal_environment_display }}</td><td>{{ company.office.legal_name }}</td><td><span class="status status-{{ company.status }}">{{ company.get_status_display }}</span></td><td><a class="table-link" href="{% url 'company-detail' company.pk %}">Abrir</a></td>
             </tr>
           {% endfor %}
         </tbody>

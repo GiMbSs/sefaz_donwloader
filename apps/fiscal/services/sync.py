@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from calendar import monthrange
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -55,6 +56,10 @@ def request_synchronization(
             raise SynchronizationRequestError("Empresa cliente não encontrada.")
         if company.status != ClientCompany.Status.ACTIVE:
             raise SynchronizationRequestError("A empresa não está ativa para sincronização.")
+        if environment != company.fiscal_environment:
+            raise SynchronizationRequestError(
+                "A solicitação deve usar o ambiente definido no cadastro da empresa."
+            )
 
         policy = SyncPolicy.objects.select_for_update().filter(company=company).first()
         if policy is None or not policy.is_active:
@@ -117,20 +122,20 @@ def request_synchronization(
 
 
 def enqueue_due_synchronizations(*, now: datetime | None = None) -> int:
-    """Queue due daily policies once, regardless of Beat's polling cadence."""
+    """Queue due automatic policies once, regardless of Beat's polling cadence."""
     now = now or timezone.now()
     queued = _release_waiting_synchronizations(now=now)
     due_policies = SyncPolicy.objects.select_related("company").filter(
         is_active=True,
         company__status=ClientCompany.Status.ACTIVE,
-        mode__in=(SyncPolicy.Mode.DAILY, SyncPolicy.Mode.HYBRID),
+        mode__in=(SyncPolicy.Mode.AUTOMATIC, SyncPolicy.Mode.HYBRID),
     )
     for policy in due_policies.iterator():
         if not _is_due(policy, now):
             continue
         submission = request_synchronization(
             company_id=policy.company_id,
-            environment=NsuControl.Environment.PRODUCTION,
+            environment=policy.company.fiscal_environment,
             trigger=SyncRequest.Trigger.SCHEDULED,
             now=now,
         )
@@ -191,9 +196,9 @@ def _dispatch_sync_request(sync_request_id: int) -> Callable[[], None]:
 
 
 def _ensure_trigger_allowed(policy: SyncPolicy, trigger: str) -> None:
-    if trigger == SyncRequest.Trigger.MANUAL and policy.mode == SyncPolicy.Mode.DAILY:
+    if trigger == SyncRequest.Trigger.MANUAL and policy.mode == SyncPolicy.Mode.AUTOMATIC:
         raise SynchronizationRequestError(
-            "A política atual permite somente sincronização diária."
+            "A política atual permite somente sincronização automática."
         )
     if trigger == SyncRequest.Trigger.SCHEDULED and policy.mode == SyncPolicy.Mode.MANUAL:
         raise SynchronizationRequestError(
@@ -209,8 +214,13 @@ def _is_due(policy: SyncPolicy, now: datetime) -> bool:
     except Exception:
         return False
     local_now = now.astimezone(policy_timezone)
-    if policy.weekdays and local_now.weekday() not in policy.weekdays:
-        return False
+    if policy.frequency == SyncPolicy.Frequency.WEEKLY:
+        if local_now.weekday() not in policy.weekdays:
+            return False
+    elif policy.frequency == SyncPolicy.Frequency.MONTHLY:
+        last_day = monthrange(local_now.year, local_now.month)[1]
+        if local_now.day != min(policy.monthday, last_day):
+            return False
     scheduled_at = local_now.replace(
         hour=policy.scheduled_time.hour,
         minute=policy.scheduled_time.minute,
@@ -222,4 +232,12 @@ def _is_due(policy: SyncPolicy, now: datetime) -> bool:
         return False
     if policy.last_requested_at is None:
         return True
-    return policy.last_requested_at.astimezone(policy_timezone).date() != local_now.date()
+    previous_local = policy.last_requested_at.astimezone(policy_timezone)
+    if policy.frequency == SyncPolicy.Frequency.DAILY:
+        return previous_local.date() != local_now.date()
+    if policy.frequency == SyncPolicy.Frequency.WEEKLY:
+        return previous_local.isocalendar()[:2] != local_now.isocalendar()[:2]
+    return (previous_local.year, previous_local.month) != (
+        local_now.year,
+        local_now.month,
+    )

@@ -5,8 +5,15 @@ from .models import DistributionBatch, DistributionItem, FiscalDocument, NsuCont
 
 @admin.register(SyncPolicy)
 class SyncPolicyAdmin(admin.ModelAdmin):
-    list_display = ("company", "mode", "scheduled_time", "is_active", "last_finished_at")
-    list_filter = ("mode", "is_active")
+    list_display = (
+        "company",
+        "mode",
+        "frequency",
+        "scheduled_time",
+        "is_active",
+        "last_finished_at",
+    )
+    list_filter = ("mode", "frequency", "is_active")
     search_fields = ("company__legal_name", "company__tax_identifier")
     list_select_related = ("company",)
 

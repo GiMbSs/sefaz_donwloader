@@ -55,6 +55,7 @@ def test_company_form_accepts_and_normalizes_a_formatted_cnpj():
             "tax_identifier": "00.000.000/E08G-12",
             "state_registration": "",
             "state": "PB",
+        "fiscal_environment": ClientCompany.FiscalEnvironment.HOMOLOGATION,
             "status": ClientCompany.Status.ACTIVE,
         },
         offices=AccountingOffice.objects.filter(pk=office.pk),
@@ -62,3 +63,26 @@ def test_company_form_accepts_and_normalizes_a_formatted_cnpj():
 
     assert form.is_valid(), form.errors
     assert form.instance.tax_identifier == "00000000E08G12"
+
+
+@pytest.mark.django_db
+def test_company_environment_cannot_change_after_nsu_history_exists():
+    office = AccountingOffice.objects.create(
+        legal_name="Contabilidade Exemplo",
+        tax_identifier="00000000000191",
+    )
+    company = ClientCompany.objects.create(
+        office=office,
+        legal_name="Cliente Exemplo",
+        tax_identifier="00000000E08G12",
+    )
+    from apps.fiscal.models import NsuControl
+
+    NsuControl.objects.create(
+        company=company,
+        environment=ClientCompany.FiscalEnvironment.HOMOLOGATION,
+    )
+    company.fiscal_environment = ClientCompany.FiscalEnvironment.PRODUCTION
+
+    with pytest.raises(ValidationError, match="ambiente não pode ser alterado"):
+        company.full_clean()

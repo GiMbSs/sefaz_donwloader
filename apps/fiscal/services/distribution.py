@@ -179,6 +179,7 @@ def persist_distribution_response(
                 raw_path = storage.write_response(
                     control.company_id,
                     raw_response,
+                    company=control.company,
                     category="distribution",
                 )
                 created_paths.append(raw_path)
@@ -187,6 +188,7 @@ def persist_distribution_response(
                     soap_path = storage.write_response(
                         control.company_id,
                         soap_response,
+                        company=control.company,
                         category="soap",
                     )
                     created_paths.append(soap_path)
@@ -389,6 +391,7 @@ def _persist_document(
     xml_sha256 = hashlib.sha256(decoded.xml_payload).hexdigest()
     relative_path = storage.write_document(
         company_id=batch.company_id,
+        company=batch.company,
         model=model,
         access_key=access_key,
         kind=kind,

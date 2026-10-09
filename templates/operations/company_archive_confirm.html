@@ -1,0 +1,25 @@
+{% extends 'operations/base.html' %}
+
+{% block title %}Arquivar empresa · SEFAZ Downloader{% endblock %}
+{% block page_title %}Arquivar empresa{% endblock %}
+
+{% block content %}
+  <section class="form-panel danger-panel">
+    <p class="lede">{{ company.legal_name }} · CNPJ {{ company.tax_identifier }}</p>
+    <aside class="risk-note risk-note-danger">
+      <strong>Ação delicada e irreversível na operação diária</strong>
+      <span>O cadastro será arquivado e a rotina automática será interrompida. XMLs, lotes, certificado cifrado e trilha de auditoria não serão apagados: a retenção fiscal continua obrigatória.</span>
+    </aside>
+    <form method="post" class="form-grid" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+        <div class="field-group full-row">
+          {% if field.field.widget.input_type == 'checkbox' %}{{ field }}<label for="{{ field.id_for_label }}">{{ field.label }}</label>{% else %}<label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% endif %}
+          {% if field.errors %}<div class="field-error">{{ field.errors }}</div>{% endif %}
+        </div>
+      {% endfor %}
+      <div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-danger" type="submit">Confirmar arquivamento</button></div>
+    </form>
+  </section>
+{% endblock %}

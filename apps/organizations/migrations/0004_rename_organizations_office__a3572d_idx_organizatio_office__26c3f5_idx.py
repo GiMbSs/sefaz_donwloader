@@ -4,15 +4,12 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
-    dependencies = [
-        ('organizations', '0003_officemembership'),
-    ]
+    dependencies = [("organizations", "0003_officemembership")]
 
     operations = [
         migrations.RenameIndex(
-            model_name='clientcompany',
-            new_name='organizatio_office__26c3f5_idx',
-            old_name='organizations_office__a3572d_idx',
+            model_name="clientcompany",
+            old_name="organizations_office__a3572d_idx",
+            new_name="organizatio_office__26c3f5_idx",
         ),
     ]

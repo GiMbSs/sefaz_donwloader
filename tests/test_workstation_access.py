@@ -1,6 +1,8 @@
 from datetime import time
+from unittest.mock import patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 
 from apps.accounts.models import User
@@ -45,8 +47,7 @@ def test_operator_can_only_open_companies_from_their_office(client):
     hidden = client.get(reverse("company-detail", args=[hidden_company.pk]))
 
     assert visible.status_code == 200
-    assert b'value="production"' in visible.content
-    assert b'value="homologation"' in visible.content
+    assert b"Ambiente cadastrado" in visible.content
     assert hidden.status_code == 404
 
 
@@ -70,6 +71,7 @@ def test_operator_can_enqueue_a_manual_request_without_exposing_nsu(
         office=office,
         legal_name="Cliente Visível Ltda.",
         tax_identifier="00000000000191",
+        fiscal_environment=environment,
     )
     OfficeMembership.objects.create(
         office=office,
@@ -122,6 +124,59 @@ def test_only_office_administrator_can_open_company_registration(client):
     response = client.get(reverse("company-create"))
 
     assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_administrator_can_stage_certificate_during_company_registration(client):
+    user = User.objects.create_user(
+        email="admin@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.ADMIN,
+    )
+    client.force_login(user)
+
+    with patch("apps.operations.views.stage_certificate_upload") as stage_upload:
+        response = client.post(
+            reverse("company-create"),
+            {
+                "office": office.pk,
+                "legal_name": "Cliente com A1 Ltda.",
+                "tax_identifier": "00000000E08G12",
+                "state_registration": "",
+                "state": "PB",
+                "fiscal_environment": ClientCompany.FiscalEnvironment.HOMOLOGATION,
+                "status": ClientCompany.Status.ACTIVE,
+                "certificate_file": SimpleUploadedFile(
+                    "cliente.pfx",
+                    b"certificate-upload-envelope-input",
+                    content_type="application/x-pkcs12",
+                ),
+                "certificate_password": "senha-do-certificado",
+            },
+        )
+
+    company = ClientCompany.objects.get(legal_name="Cliente com A1 Ltda.")
+    policy = SyncPolicy.objects.get(company=company)
+    assert response.status_code == 302
+    assert policy.is_active is False
+    stage_upload.assert_called_once_with(
+        company_id=company.pk,
+        filename="cliente.pfx",
+        payload=b"certificate-upload-envelope-input",
+        password="senha-do-certificado",
+        uploaded_by=user,
+    )
+    audit_payload = AuditLog.objects.get(
+        action="organizations.company_created",
+        target=f"organizations.client_company:{company.pk}",
+    ).payload
+    assert audit_payload["certificate_staged"] is True
+    assert "senha-do-certificado" not in str(audit_payload)
 
 
 @pytest.mark.django_db
@@ -207,4 +262,48 @@ def test_operator_cannot_queue_a_failed_batch_for_local_reprocessing(client):
     assert batch.processing_status == DistributionBatch.ProcessingStatus.FAILED
     assert not AuditLog.objects.filter(
         action="fiscal.distribution_batch_reprocess_requested"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_administrator_archives_company_after_explicit_cnpj_confirmation(client):
+    user = User.objects.create_user(
+        email="admin@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    company = ClientCompany.objects.create(
+        office=office,
+        legal_name="Cliente Arquivado Ltda.",
+        tax_identifier="00000000000191",
+    )
+    policy = SyncPolicy.objects.create(
+        company=company,
+        mode=SyncPolicy.Mode.HYBRID,
+        scheduled_time=time(2, 0),
+    )
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.ADMIN,
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("company-archive", args=[company.pk]),
+        {
+            "confirmation_tax_identifier": company.tax_identifier,
+            "understand_retention": "on",
+        },
+    )
+
+    company.refresh_from_db()
+    policy.refresh_from_db()
+    assert response.status_code == 302
+    assert company.status == ClientCompany.Status.ARCHIVED
+    assert policy.is_active is False
+    assert AuditLog.objects.filter(
+        actor=user,
+        action="organizations.company_archived",
+        target=f"organizations.client_company:{company.pk}",
     ).exists()

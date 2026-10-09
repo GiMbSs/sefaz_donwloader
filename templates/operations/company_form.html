@@ -6,11 +6,22 @@
 {% block content %}
   <section class="form-panel">
     <p class="lede">Identificação fiscal e vínculo com o escritório responsável.</p>
+    {% if is_create %}
+      <aside class="risk-note">
+        <strong>Antes de salvar</strong>
+        <span>Escolha o ambiente com cuidado. Homologação é indicada para testes; produção somente deve ser escolhida para uma empresa autorizada. O certificado é opcional neste passo e sua senha nunca é exibida ou gravada em texto no banco.</span>
+      </aside>
+    {% else %}
+      <aside class="risk-note">
+        <strong>Atenção a alterações fiscais</strong>
+        <span>Inativar a empresa interrompe novas sincronizações. O ambiente não pode ser alterado quando já existir histórico de NSU ou consultas, para preservar a separação fiscal.</span>
+      </aside>
+    {% endif %}
     <form method="post" class="form-grid" novalidate>
       {% csrf_token %}
       {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
       {% for field in form %}
-        <div class="field-group {% if field.name == 'legal_name' %}field-wide{% endif %}">
+        <div class="field-group {% if field.name == 'legal_name' or field.name == 'certificate_file' or field.name == 'certificate_password' %}field-wide{% endif %}">
           <label for="{{ field.id_for_label }}">{{ field.label }}</label>
           {{ field }}
           {% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}

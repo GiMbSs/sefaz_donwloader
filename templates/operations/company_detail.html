@@ -6,11 +6,11 @@
 {% block content %}
   <section class="company-heading">
     <div>
-      <p class="lede">CNPJ {{ company.tax_identifier }} · {{ company.state }}{% if company.state_registration %} · IE {{ company.state_registration }}{% endif %}</p>
+      <p class="lede">CNPJ {{ company.tax_identifier }} · {{ company.state }} · Ambiente {{ company.get_fiscal_environment_display }}{% if company.state_registration %} · IE {{ company.state_registration }}{% endif %}</p>
       <p class="muted">Escritório responsável: {{ company.office.legal_name }}</p>
     </div>
     <div class="action-row">
-      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a><a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a>{% endif %}
+      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a><a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a><a class="button button-danger" href="{% url 'company-archive' company.pk %}">Excluir (arquivar)</a>{% endif %}
     </div>
   </section>
 
@@ -19,7 +19,7 @@
       <span class="state-label">Situação da empresa</span><strong><span class="status status-{{ company.status }}">{{ company.get_status_display }}</span></strong>
     </article>
     <article class="state-block">
-      <span class="state-label">Política</span><strong>{% if policy %}{{ policy.get_mode_display }}{% else %}Não configurada{% endif %}</strong><small>{% if policy and policy.scheduled_time %}{{ policy.scheduled_time|time:'H:i' }} · {{ policy.timezone }}{% endif %}</small>
+      <span class="state-label">Política</span><strong>{% if policy %}{{ policy.get_mode_display }} · {{ policy.get_frequency_display }}{% else %}Não configurada{% endif %}</strong><small>{% if policy and policy.scheduled_time %}{{ policy.scheduled_time|time:'H:i' }} · {{ policy.timezone }}{% endif %}{% if policy and not policy.is_active %} · desativada{% endif %}</small>
     </article>
     <article class="state-block">
       <span class="state-label">Certificado A1</span>
@@ -28,11 +28,9 @@
   </section>
 
   <section class="request-band">
-    <div><h2>Solicitar sincronização</h2><p>Uma nova solicitação só é criada se não houver operação ativa para o mesmo ambiente.</p></div>
+    <div><h2>Solicitar sincronização</h2><p>Ambiente cadastrado: {{ company.get_fiscal_environment_display }}. Uma nova solicitação só é criada se não houver operação ativa para este ambiente.</p></div>
     <form method="post" action="{% url 'company-sync' company.pk %}" class="inline-form">
       {% csrf_token %}
-      <label for="{{ manual_sync_form.environment.id_for_label }}">{{ manual_sync_form.environment.label }}</label>
-      {{ manual_sync_form.environment }}
       <button class="button button-primary" type="submit">Incluir na fila</button>
     </form>
   </section>

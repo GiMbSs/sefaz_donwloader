@@ -4,20 +4,17 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
-    dependencies = [
-        ('certificates', '0003_certificate_credential_files'),
-    ]
+    dependencies = [("certificates", "0003_certificate_credential_files")]
 
     operations = [
         migrations.RenameIndex(
-            model_name='digitalcertificate',
-            new_name='certificate_company_f09d93_idx',
-            old_name='certificates_company_7cbbfc_idx',
+            model_name="digitalcertificate",
+            old_name="certificates_company_7cbbfc_idx",
+            new_name="certificate_company_f09d93_idx",
         ),
         migrations.RenameIndex(
-            model_name='digitalcertificate',
-            new_name='certificate_not_val_349f89_idx',
-            old_name='certificates_not_val_1d775d_idx',
+            model_name="digitalcertificate",
+            old_name="certificates_not_val_1d775d_idx",
+            new_name="certificate_not_val_349f89_idx",
         ),
     ]
