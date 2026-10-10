@@ -1,3 +1,4 @@
+import logging
 from datetime import time, timedelta
 
 import pytest
@@ -82,12 +83,13 @@ class _SuccessfulClient:
 
 
 class _FailingTransportClient:
-    def __init__(self) -> None:
+    def __init__(self, error: SefazTransportError | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self.error = error or SefazTransportError("network unavailable")
 
     def request_dist_nsu(self, **kwargs: object) -> SefazDistributionResult:
         self.calls.append(kwargs)
-        raise SefazTransportError("network unavailable")
+        raise self.error
 
 
 @pytest.mark.django_db
@@ -299,7 +301,7 @@ def test_waiting_request_is_only_released_after_the_persisted_hold_expires():
 
 
 @pytest.mark.django_db
-def test_transport_failure_finishes_request_and_applies_conservative_hold():
+def test_transport_failure_finishes_request_and_applies_conservative_hold(caplog):
     now = timezone.now()
     company = _company()
     _certificate(company, now=now)
@@ -311,6 +313,7 @@ def test_transport_failure_finishes_request_and_applies_conservative_hold():
         now=now,
     )
     client = _FailingTransportClient()
+    caplog.set_level(logging.ERROR, logger="apps.fiscal.services.execution")
 
     result = execute_sync_request(
         submission.request.pk,
@@ -334,6 +337,49 @@ def test_transport_failure_finishes_request_and_applies_conservative_hold():
         code="sync_execution_failed",
         severity=OperationAlert.Severity.CRITICAL,
     ).exists()
+    assert "event=fiscal_sync_failed" in caplog.text
+    assert "failure_domain=network" in caplog.text
+    assert "failure_code=connection_unconfirmed" in caplog.text
+    assert "http_status=unavailable" in caplog.text
+    assert "exception_type=SefazTransportError" in caplog.text
+    assert "network unavailable" not in caplog.text
+
+
+@pytest.mark.django_db
+def test_http_failure_logs_the_safe_response_status(caplog):
+    now = timezone.now()
+    company = _company()
+    company.fiscal_environment = ClientCompany.FiscalEnvironment.HOMOLOGATION
+    company.save(update_fields=("fiscal_environment",))
+    _certificate(company, now=now)
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.HOMOLOGATION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+        now=now,
+    )
+    client = _FailingTransportClient(
+        SefazTransportError(
+            "unexpected HTTP response",
+            failure_domain="sefaz",
+            failure_code="http_status_unexpected",
+            http_status=404,
+        )
+    )
+    caplog.set_level(logging.ERROR, logger="apps.fiscal.services.execution")
+
+    result = execute_sync_request(
+        submission.request.pk,
+        client=client,  # type: ignore[arg-type]
+        now=now,
+    )
+
+    assert result == SyncRequest.Status.FAILED
+    assert "failure_domain=sefaz" in caplog.text
+    assert "failure_code=http_status_unexpected" in caplog.text
+    assert "http_status=404" in caplog.text
+    assert "unexpected HTTP response" not in caplog.text
 
 
 @pytest.mark.django_db

@@ -7,6 +7,7 @@ transaction, and never retries an uncertain remote consultation automatically.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -28,6 +29,8 @@ from apps.fiscal.services.sefaz import (
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.operations.models import AuditLog
 from apps.operations.services import open_operation_alert
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -114,7 +117,8 @@ def execute_sync_request(
             sync_request_id=claimed.request_id,
             storage=storage,
         )
-    except SefazTransportError:
+    except SefazTransportError as error:
+        _log_transport_failure(claimed=claimed, error=error)
         _finish_failed(
             sync_request_id=claimed.request_id,
             now=now,
@@ -126,7 +130,13 @@ def execute_sync_request(
             hold_cursor=True,
         )
         return SyncRequest.Status.FAILED
-    except (SefazDistributionError, DistributionParseError, FiscalStorageError):
+    except SefazDistributionError as error:
+        _log_worker_failure(
+            claimed=claimed,
+            failure_domain=error.failure_domain,
+            failure_code=error.failure_code,
+            error=error,
+        )
         _finish_failed(
             sync_request_id=claimed.request_id,
             now=now,
@@ -138,7 +148,49 @@ def execute_sync_request(
             hold_cursor=True,
         )
         return SyncRequest.Status.FAILED
-    except Exception:
+    except DistributionParseError as error:
+        _log_worker_failure(
+            claimed=claimed,
+            failure_domain="sefaz",
+            failure_code="response_distribution_parse_failed",
+            error=error,
+        )
+        _finish_failed(
+            sync_request_id=claimed.request_id,
+            now=now,
+            detail=(
+                "A resposta fiscal não pôde ser concluída com segurança. "
+                "Aguarde uma hora antes de uma nova solicitação."
+            ),
+            reason="response_or_storage",
+            hold_cursor=True,
+        )
+        return SyncRequest.Status.FAILED
+    except FiscalStorageError as error:
+        _log_worker_failure(
+            claimed=claimed,
+            failure_domain="internal",
+            failure_code="fiscal_storage_failure",
+            error=error,
+        )
+        _finish_failed(
+            sync_request_id=claimed.request_id,
+            now=now,
+            detail=(
+                "A resposta fiscal não pôde ser concluída com segurança. "
+                "Aguarde uma hora antes de uma nova solicitação."
+            ),
+            reason="response_or_storage",
+            hold_cursor=True,
+        )
+        return SyncRequest.Status.FAILED
+    except Exception as error:
+        _log_worker_failure(
+            claimed=claimed,
+            failure_domain="internal",
+            failure_code="unexpected_exception",
+            error=error,
+        )
         _finish_failed(
             sync_request_id=claimed.request_id,
             now=now,
@@ -157,6 +209,40 @@ def execute_sync_request(
         now=now,
     )
     return SyncRequest.Status.SUCCEEDED
+
+
+def _log_transport_failure(
+    *, claimed: ClaimedSynchronization, error: SefazTransportError
+) -> None:
+    """Log a safe classification without certificate or fiscal payload data."""
+
+    _log_worker_failure(
+        claimed=claimed,
+        failure_domain=error.failure_domain,
+        failure_code=error.failure_code,
+        error=error,
+        http_status=error.http_status,
+    )
+
+
+def _log_worker_failure(
+    *,
+    claimed: ClaimedSynchronization,
+    failure_domain: str,
+    failure_code: str,
+    error: Exception,
+    http_status: int | None = None,
+) -> None:
+    logger.error(
+        "event=fiscal_sync_failed request_id=%s environment=%s "
+        "failure_domain=%s failure_code=%s http_status=%s exception_type=%s",
+        claimed.request_id,
+        claimed.environment,
+        failure_domain,
+        failure_code,
+        http_status if http_status is not None else "unavailable",
+        type(error).__name__,
+    )
 
 
 def _claim_sync_request(

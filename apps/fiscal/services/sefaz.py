@@ -38,7 +38,7 @@ _ENDPOINTS = {
         "NFeDistribuicaoDFe.asmx"
     ),
     "homologation": (
-        "https://hom.nfe.fazenda.gov.br/NFeDistribuicaoDFe/"
+        "https://hom1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/"
         "NFeDistribuicaoDFe.asmx"
     ),
 }
@@ -47,9 +47,35 @@ _ENDPOINTS = {
 class SefazDistributionError(RuntimeError):
     """The distribution request cannot safely proceed or be trusted."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_domain: str = "internal",
+        failure_code: str = "distribution_processing_failed",
+    ) -> None:
+        super().__init__(message)
+        self.failure_domain = failure_domain
+        self.failure_code = failure_code
+
 
 class SefazTransportError(SefazDistributionError):
     """Mutual-TLS transport to SEFAZ did not return a usable SOAP response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_domain: str = "network",
+        failure_code: str = "connection_unconfirmed",
+        http_status: int | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            failure_domain=failure_domain,
+            failure_code=failure_code,
+        )
+        self.http_status = http_status
 
 
 @dataclass(frozen=True)
@@ -87,7 +113,9 @@ class MutualTlsSoapTransport:
             password = vault.unseal_password(certificate)
         except CertificateVaultError as error:
             raise SefazTransportError(
-                "O certificado ativo não pôde ser aberto pelo worker."
+                "O certificado ativo não pôde ser aberto pelo worker.",
+                failure_domain="internal",
+                failure_code="certificate_vault_unavailable",
             ) from error
         try:
             with _temporary_client_certificate(pfx_payload, password) as client_cert:
@@ -127,12 +155,17 @@ class MutualTlsSoapTransport:
             ) as response:
                 if response.status_code != 200:
                     raise SefazTransportError(
-                        "A SEFAZ respondeu com um status HTTP inesperado."
+                        "A SEFAZ respondeu com um status HTTP inesperado.",
+                        failure_domain="sefaz",
+                        failure_code="http_status_unexpected",
+                        http_status=response.status_code,
                     )
                 return _read_bounded_response(response)
         except requests.RequestException as error:
             raise SefazTransportError(
-                "Não foi possível estabelecer uma conexão mTLS com a SEFAZ."
+                "Não foi possível estabelecer uma conexão mTLS com a SEFAZ.",
+                failure_domain="network",
+                failure_code="mtls_connection_unconfirmed",
             ) from error
 
 
@@ -176,7 +209,8 @@ def endpoint_for(environment: str) -> str:
         return _ENDPOINTS[environment]
     except KeyError as error:
         raise SefazDistributionError(
-            "Ambiente fiscal inválido para distribuição."
+            "Ambiente fiscal inválido para distribuição.",
+            failure_code="fiscal_environment_invalid",
         ) from error
 
 
@@ -190,7 +224,10 @@ def build_dist_nsu_xml(
     try:
         validate_tax_identifier(tax_identifier)
     except ValidationError as error:
-        raise SefazDistributionError("O CNPJ da empresa é inválido.") from error
+        raise SefazDistributionError(
+            "O CNPJ da empresa é inválido.",
+            failure_code="company_tax_identifier_invalid",
+        ) from error
     nsu = _normalise_nsu(last_nsu)
     environment_code = _environment_code(environment)
     root = etree.Element(
@@ -209,7 +246,8 @@ def build_dist_nsu_xml(
         validate_fiscal_xml(payload, expected_root="distDFeInt")
     except FiscalSchemaError as error:
         raise SefazDistributionError(
-            "A solicitação não atende ao schema da distribuição."
+            "A solicitação não atende ao schema da distribuição.",
+            failure_code="distribution_request_schema_invalid",
         ) from error
     return payload
 
@@ -223,7 +261,8 @@ def build_soap_envelope(distribution_request: bytes) -> bytes:
         )
     except FiscalSchemaError as error:
         raise SefazDistributionError(
-            "A solicitação de distribuição não pode ser incluída no SOAP."
+            "A solicitação de distribuição não pode ser incluída no SOAP.",
+            failure_code="distribution_request_soap_invalid",
         ) from error
     envelope = etree.Element(
         etree.QName(SOAP12_NAMESPACE, "Envelope"),
@@ -254,9 +293,17 @@ def extract_distribution_response(soap_response: bytes) -> bytes:
     root = _parse_soap(soap_response)
     body = root.find(f"{{{SOAP12_NAMESPACE}}}Body")
     if body is None:
-        raise SefazDistributionError("A resposta SOAP não contém Body.")
+        raise SefazDistributionError(
+            "A resposta SOAP não contém Body.",
+            failure_domain="sefaz",
+            failure_code="response_soap_body_missing",
+        )
     if body.find(f"{{{SOAP12_NAMESPACE}}}Fault") is not None:
-        raise SefazDistributionError("A SEFAZ retornou uma falha SOAP.")
+        raise SefazDistributionError(
+            "A SEFAZ retornou uma falha SOAP.",
+            failure_domain="sefaz",
+            failure_code="response_soap_fault",
+        )
     payloads = body.xpath(
         ".//*[local-name()='retDistDFeInt' and "
         "namespace-uri()='http://www.portalfiscal.inf.br/nfe']"
@@ -271,13 +318,17 @@ def extract_distribution_response(soap_response: bytes) -> bytes:
         distribution_response = _extract_escaped_result(body)
     else:
         raise SefazDistributionError(
-            "A resposta SOAP contém mais de um retorno fiscal."
+            "A resposta SOAP contém mais de um retorno fiscal.",
+            failure_domain="sefaz",
+            failure_code="response_multiple_distribution_results",
         )
     try:
         validate_fiscal_xml(distribution_response, expected_root="retDistDFeInt")
     except FiscalSchemaError as error:
         raise SefazDistributionError(
-            "O retorno da SEFAZ não atende ao schema da distribuição."
+            "O retorno da SEFAZ não atende ao schema da distribuição.",
+            failure_domain="sefaz",
+            failure_code="response_distribution_schema_invalid",
         ) from error
     return distribution_response
 
@@ -287,22 +338,36 @@ def _environment_code(environment: str) -> str:
         return "1"
     if environment == "homologation":
         return "2"
-    raise SefazDistributionError("Ambiente fiscal inválido para distribuição.")
+    raise SefazDistributionError(
+        "Ambiente fiscal inválido para distribuição.",
+        failure_code="fiscal_environment_invalid",
+    )
 
 
 def _normalise_nsu(value: str) -> str:
     if not value:
         return "0".zfill(15)
     if not value.isdecimal() or len(value) > 15:
-        raise SefazDistributionError("O cursor NSU persistido é inválido.")
+        raise SefazDistributionError(
+            "O cursor NSU persistido é inválido.",
+            failure_code="persisted_nsu_invalid",
+        )
     return value.zfill(15)
 
 
 def _parse_soap(payload: bytes) -> etree._Element:
     if not payload or len(payload) > settings.SEFAZ_MAX_RESPONSE_BYTES:
-        raise SefazDistributionError("A resposta SOAP está vazia ou excede o limite.")
+        raise SefazDistributionError(
+            "A resposta SOAP está vazia ou excede o limite.",
+            failure_domain="sefaz",
+            failure_code="response_soap_empty_or_exceeds_limit",
+        )
     if b"<!DOCTYPE" in payload.upper():
-        raise SefazDistributionError("DOCTYPE não é permitido na resposta SOAP.")
+        raise SefazDistributionError(
+            "DOCTYPE não é permitido na resposta SOAP.",
+            failure_domain="sefaz",
+            failure_code="response_soap_doctype_rejected",
+        )
     parser = etree.XMLParser(
         resolve_entities=False,
         no_network=True,
@@ -312,12 +377,20 @@ def _parse_soap(payload: bytes) -> etree._Element:
     try:
         root = etree.fromstring(payload, parser=parser)
     except etree.XMLSyntaxError as error:
-        raise SefazDistributionError("A resposta SOAP não é bem-formada.") from error
+        raise SefazDistributionError(
+            "A resposta SOAP não é bem-formada.",
+            failure_domain="sefaz",
+            failure_code="response_soap_malformed",
+        ) from error
     if (
         etree.QName(root).namespace != SOAP12_NAMESPACE
         or etree.QName(root).localname != "Envelope"
     ):
-        raise SefazDistributionError("A resposta não usa o envelope SOAP 1.2 esperado.")
+        raise SefazDistributionError(
+            "A resposta não usa o envelope SOAP 1.2 esperado.",
+            failure_domain="sefaz",
+            failure_code="response_soap_version_invalid",
+        )
     return root
 
 
@@ -328,7 +401,9 @@ def _extract_escaped_result(body: etree._Element) -> bytes:
     )
     if len(results) != 1 or not (results[0].text or "").strip():
         raise SefazDistributionError(
-            "A resposta SOAP não contém retorno de distribuição."
+            "A resposta SOAP não contém retorno de distribuição.",
+            failure_domain="sefaz",
+            failure_code="response_distribution_result_missing",
         )
     return results[0].text.strip().encode("utf-8")
 
@@ -341,7 +416,11 @@ def _read_bounded_response(response: requests.Response) -> bytes:
             continue
         total += len(chunk)
         if total > settings.SEFAZ_MAX_RESPONSE_BYTES:
-            raise SefazTransportError("A resposta da SEFAZ excede o limite aceito.")
+            raise SefazTransportError(
+                "A resposta da SEFAZ excede o limite aceito.",
+                failure_domain="sefaz",
+                failure_code="response_exceeds_limit",
+            )
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -357,10 +436,16 @@ def _temporary_client_certificate(
         )
     except (TypeError, ValueError) as error:
         raise SefazTransportError(
-            "O certificado A1 não pôde ser convertido para TLS."
+            "O certificado A1 não pôde ser convertido para TLS.",
+            failure_domain="internal",
+            failure_code="certificate_tls_material_invalid",
         ) from error
     if private_key is None or certificate is None:
-        raise SefazTransportError("O certificado A1 não contém chave privada.")
+        raise SefazTransportError(
+            "O certificado A1 não contém chave privada.",
+            failure_domain="internal",
+            failure_code="certificate_private_key_missing",
+        )
     certificate_material = certificate.public_bytes(serialization.Encoding.PEM)
     for additional_certificate in additional_certificates or ():
         certificate_material += additional_certificate.public_bytes(

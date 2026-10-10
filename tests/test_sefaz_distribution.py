@@ -10,8 +10,10 @@ from apps.fiscal.services.sefaz import (
     NFE_NAMESPACE,
     SOAP12_NAMESPACE,
     WSDL_NAMESPACE,
+    MutualTlsSoapTransport,
     NfeDistributionClient,
     SefazDistributionError,
+    SefazTransportError,
     build_dist_nsu_xml,
     build_soap_envelope,
     endpoint_for,
@@ -51,7 +53,7 @@ class _Transport:
     ("environment", "expected_environment_code", "expected_endpoint_prefix"),
     [
         ("production", "1", "https://www1.nfe.fazenda.gov.br/"),
-        ("homologation", "2", "https://hom.nfe.fazenda.gov.br/"),
+        ("homologation", "2", "https://hom1.nfe.fazenda.gov.br/"),
     ],
 )
 def test_request_uses_the_selected_environment_in_xml_and_endpoint(
@@ -100,7 +102,7 @@ def test_client_extracts_and_validates_the_inner_distribution_response():
         vault=vault,
     )
 
-    assert result.endpoint.startswith("https://hom.nfe.fazenda.gov.br/")
+    assert result.endpoint.startswith("https://hom1.nfe.fazenda.gov.br/")
     assert b"retDistDFeInt" in result.distribution_response
     assert len(transport.calls) == 1
 
@@ -110,5 +112,35 @@ def test_rejects_soap_fault_or_unvalidated_inner_response():
       <soap12:Body><soap12:Fault><soap12:Reason /></soap12:Fault></soap12:Body>
     </soap12:Envelope>""".encode()
 
-    with pytest.raises(SefazDistributionError):
+    with pytest.raises(SefazDistributionError) as error:
         extract_distribution_response(fault)
+
+    assert error.value.failure_domain == "sefaz"
+    assert error.value.failure_code == "response_soap_fault"
+
+
+def test_transport_retains_only_http_status_for_an_unexpected_response(monkeypatch):
+    class _UnexpectedResponse:
+        status_code = 404
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "apps.fiscal.services.sefaz.requests.post",
+        lambda *args, **kwargs: _UnexpectedResponse(),
+    )
+
+    with pytest.raises(SefazTransportError) as error:
+        MutualTlsSoapTransport._post(
+            endpoint="https://sefaz.example.test/NFeDistribuicaoDFe.asmx",
+            envelope=b"<soap12:Envelope />",
+            client_cert=("certificate.pem", "private-key.pem"),
+        )
+
+    assert error.value.failure_domain == "sefaz"
+    assert error.value.failure_code == "http_status_unexpected"
+    assert error.value.http_status == 404

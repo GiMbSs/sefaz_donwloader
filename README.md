@@ -214,6 +214,15 @@ Mantenha os dois processos ativos durante a solicitação. O `runserver` usa por
 padrão `redis://127.0.0.1:6379/0`; não altere essa URL para apontar ao nome de
 serviço `redis`, que só é resolvido entre containers.
 
+Falhas do worker são registradas no log como `event=fiscal_sync_failed`, sem
+CNPJ, NSU, certificado, senha, XML ou SOAP. Os campos `failure_domain` e
+`failure_code` informam se a origem é `internal`, `sefaz` ou `network`; neste
+último caso a conexão não permite atribuir a falha com segurança à SEFAZ ou à
+infraestrutura local. Quando a SEFAZ responder HTTP diferente de `200`, o
+evento inclui somente `http_status` (por exemplo, `404`), sem registrar corpo
+ou cabeçalhos da resposta. Em Docker, consulte com `docker compose logs
+--tail=200 worker`.
+
 ## Instalação local com Docker
 
 1. Copie `.env.example` para `.env`.
