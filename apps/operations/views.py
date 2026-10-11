@@ -31,9 +31,10 @@ from apps.fiscal.models import (
 from apps.fiscal.services.distribution import request_distribution_batch_reprocessing
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.fiscal.services.sync import (
-    InitialNsuConfigurationError,
+    NsuCursorCorrectionError,
     SynchronizationRequestError,
     configure_initial_nsu,
+    correct_nsu_cursor,
     request_synchronization,
 )
 from apps.operations.forms import (
@@ -43,7 +44,7 @@ from apps.operations.forms import (
     ClientCompanyCreateForm,
     ClientCompanyForm,
     CompanyArchiveForm,
-    InitialNsuForm,
+    NsuCursorCorrectionForm,
     SyncPolicyForm,
 )
 from apps.operations.models import AuditLog, OperationAlert
@@ -212,15 +213,6 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
         can_manage = company.status != ClientCompany.Status.ARCHIVED and (
             manageable_companies(self.request.user).filter(pk=company.pk).exists()
         )
-        has_nsu_history = (
-            company.nsu_controls.filter(
-                environment=company.fiscal_environment,
-                service="nfe_distribution",
-            ).exists()
-            or company.sync_requests.filter(
-                environment=company.fiscal_environment
-            ).exists()
-        )
         context.update(
             {
                 "company": company,
@@ -242,7 +234,7 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
                     "-created_at"
                 )[:12],
                 "can_manage": can_manage,
-                "can_configure_initial_nsu": can_manage and not has_nsu_history,
+                "can_correct_nsu_cursor": can_manage,
             }
         )
         return context
@@ -329,39 +321,41 @@ class CompanyCreateView(LoginRequiredMixin, View):
         return redirect("company-detail", company_id=company.pk)
 
 
-class CompanyInitialNsuView(CompanyAccessMixin, View):
-    """Configure a single continuation cursor before fiscal processing starts."""
+class CompanyNsuCursorView(CompanyAccessMixin, View):
+    """Correct the continuation cursor through an explicit admin-only flow."""
 
     template_name = "operations/initial_nsu_form.html"
     manage_required = True
 
     @staticmethod
-    def _is_configurable(company: ClientCompany) -> bool:
-        return not (
-            company.nsu_controls.filter(
-                environment=company.fiscal_environment,
-                service="nfe_distribution",
-            ).exists()
-            or company.sync_requests.filter(
-                environment=company.fiscal_environment
-            ).exists()
-        )
+    def _current_last_nsu(company: ClientCompany) -> str:
+        control = company.nsu_controls.filter(
+            environment=company.fiscal_environment,
+            service="nfe_distribution",
+        ).first()
+        return control.last_nsu if control is not None else ""
 
     def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
-        if not self._is_configurable(company):
-            raise PermissionDenied(
-                "O NSU inicial só pode ser definido antes da primeira solicitação."
-            )
         return render(
             request,
             self.template_name,
-            {"company": company, "form": InitialNsuForm(company=company)},
+            {
+                "company": company,
+                "form": NsuCursorCorrectionForm(
+                    company=company,
+                    current_last_nsu=self._current_last_nsu(company),
+                ),
+            },
         )
 
     def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
-        form = InitialNsuForm(request.POST, company=company)
+        form = NsuCursorCorrectionForm(
+            request.POST,
+            company=company,
+            current_last_nsu=self._current_last_nsu(company),
+        )
         if not form.is_valid():
             return render(
                 request,
@@ -370,14 +364,15 @@ class CompanyInitialNsuView(CompanyAccessMixin, View):
                 status=400,
             )
         try:
-            configure_initial_nsu(
+            correct_nsu_cursor(
                 company_id=company.pk,
                 environment=company.fiscal_environment,
-                initial_nsu=form.cleaned_data["initial_nsu"],
+                last_nsu=form.cleaned_data["last_nsu"],
+                reason=form.cleaned_data["reason"],
                 actor=request.user,
             )
-        except InitialNsuConfigurationError as error:
-            form.add_error("initial_nsu", str(error))
+        except NsuCursorCorrectionError as error:
+            form.add_error("last_nsu", str(error))
             return render(
                 request,
                 self.template_name,
@@ -386,7 +381,8 @@ class CompanyInitialNsuView(CompanyAccessMixin, View):
             )
         messages.success(
             request,
-            "NSU inicial registrado. A próxima consulta continuará após esse valor.",
+            "Cursor NSU corrigido. A próxima consulta continuará após esse valor "
+            "e continuará respeitando qualquer espera imposta pela SEFAZ.",
         )
         return redirect("company-detail", company_id=company.pk)
 

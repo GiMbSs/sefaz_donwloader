@@ -1,9 +1,10 @@
-from datetime import time
+from datetime import time, timedelta
 from unittest.mock import patch
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.fiscal.models import DistributionBatch, NsuControl, SyncPolicy, SyncRequest
@@ -299,7 +300,7 @@ def test_administrator_can_set_an_initial_nsu_during_company_registration(client
 
 
 @pytest.mark.django_db
-def test_administrator_can_set_an_initial_nsu_for_an_existing_company(client):
+def test_administrator_can_correct_nsu_after_fiscal_history(client):
     user = User.objects.create_user(
         email="admin@example.test",
         password="senha-segura",
@@ -316,21 +317,75 @@ def test_administrator_can_set_an_initial_nsu_for_an_existing_company(client):
         user=user,
         role=OfficeMembership.Role.ADMIN,
     )
+    hold_until = timezone.now() + timedelta(hours=1)
+    control = NsuControl.objects.create(
+        company=company,
+        environment=NsuControl.Environment.HOMOLOGATION,
+        last_nsu="000000000000001",
+        next_allowed_at=hold_until,
+        last_status_code="656",
+    )
+    SyncRequest.objects.create(
+        company=company,
+        environment=NsuControl.Environment.HOMOLOGATION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        status=SyncRequest.Status.SUCCEEDED,
+    )
     client.force_login(user)
 
     response = client.post(
-        reverse("company-initial-nsu", args=[company.pk]),
+        reverse("company-nsu-cursor", args=[company.pk]),
         {
-            "initial_nsu": "987654321",
+            "last_nsu": "987654321",
             "confirmation_tax_identifier": company.tax_identifier,
-            "understand_immutable": "on",
+            "reason": "Correção com base no cursor informado pela contabilidade.",
+            "understand_consequences": "on",
         },
     )
 
-    control = NsuControl.objects.get(company=company)
+    control.refresh_from_db()
     assert response.status_code == 302
     assert response.url == reverse("company-detail", args=[company.pk])
     assert control.last_nsu == "000000987654321"
+    assert control.next_allowed_at == hold_until
+    assert control.last_status_code == "656"
+    assert AuditLog.objects.filter(
+        actor=user,
+        action="fiscal.nsu_cursor_corrected",
+        target=f"fiscal.nsu_control:{control.pk}",
+        payload={
+            "company_id": company.pk,
+            "environment": NsuControl.Environment.HOMOLOGATION,
+            "service": "nfe_distribution",
+            "previous_last_nsu": "000000000000001",
+            "new_last_nsu": "000000987654321",
+            "reason": "Correção com base no cursor informado pela contabilidade.",
+        },
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_operator_cannot_open_the_nsu_cursor_correction(client):
+    user = User.objects.create_user(
+        email="operador@example.test",
+        password="senha-segura",
+    )
+    office = _office("Contabilidade Um Ltda.", "00000000000191")
+    company = ClientCompany.objects.create(
+        office=office,
+        legal_name="Cliente Visível Ltda.",
+        tax_identifier="00000000000191",
+    )
+    OfficeMembership.objects.create(
+        office=office,
+        user=user,
+        role=OfficeMembership.Role.OPERATOR,
+    )
+    client.force_login(user)
+
+    response = client.get(reverse("company-nsu-cursor", args=[company.pk]))
+
+    assert response.status_code == 404
 
 
 @pytest.mark.django_db

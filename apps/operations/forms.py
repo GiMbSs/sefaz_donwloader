@@ -104,8 +104,8 @@ class ClientCompanyCreateForm(ClientCompanyForm):
         required=False,
         help_text=(
             "Último NSU já processado pela contabilidade. O próximo pedido "
-            "buscará somente a sequência posterior e este valor não poderá ser "
-            "alterado depois."
+            "buscará somente a sequência posterior. Administradores podem "
+            "corrigir o cursor posteriormente, com registro de auditoria."
         ),
         widget=forms.TextInput(
             attrs={"inputmode": "numeric", "maxlength": 15, "autocomplete": "off"}
@@ -240,13 +240,13 @@ class CompanyArchiveForm(forms.Form):
         return value
 
 
-class InitialNsuForm(forms.Form):
-    initial_nsu = forms.CharField(
-        label="Último NSU já processado",
+class NsuCursorCorrectionForm(forms.Form):
+    last_nsu = forms.CharField(
+        label="Último NSU que deve ser usado",
         max_length=15,
         help_text=(
-            "Informe o último NSU concluído no sistema anterior. O próximo "
-            "pedido consultará somente os NSUs posteriores."
+            "Informe o último NSU já processado. O próximo pedido consultará "
+            "somente os NSUs posteriores."
         ),
         widget=forms.TextInput(
             attrs={"inputmode": "numeric", "maxlength": 15, "autocomplete": "off"}
@@ -257,21 +257,34 @@ class InitialNsuForm(forms.Form):
         max_length=18,
         widget=forms.TextInput(attrs={"autocomplete": "off"}),
     )
-    understand_immutable = forms.BooleanField(
+    reason = forms.CharField(
+        label="Motivo da correção",
+        max_length=500,
+        help_text="Não inclua senha de certificado, XML, SOAP ou outras credenciais.",
+        widget=forms.Textarea(attrs={"rows": 3, "autocomplete": "off"}),
+    )
+    understand_consequences = forms.BooleanField(
         label=(
-            "Entendo que esse NSU inicial será usado uma única vez e não poderá "
-            "ser alterado depois da primeira solicitação."
+            "Entendo que um cursor incorreto pode deixar documentos pendentes ou "
+            "provocar bloqueio por consumo indevido na SEFAZ."
         ),
         required=True,
     )
 
-    def __init__(self, *args, company: ClientCompany, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        company: ClientCompany,
+        current_last_nsu: str = "",
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.company = company
+        self.fields["last_nsu"].initial = current_last_nsu
 
-    def clean_initial_nsu(self) -> str:
+    def clean_last_nsu(self) -> str:
         try:
-            return normalize_initial_nsu(self.cleaned_data["initial_nsu"])
+            return normalize_initial_nsu(self.cleaned_data["last_nsu"])
         except ValueError as error:
             raise forms.ValidationError(str(error)) from error
 

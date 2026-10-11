@@ -28,7 +28,8 @@ automatiza portais, CAPTCHA ou navegação humana da SEFAZ.
 - O fluxo usa `NFeDistribuicaoDFe` e `ultNSU`. Ele não prova cobertura de
   documentos emitidos pela própria empresa cliente.
 - A resposta `cStat=137` e bloqueios `cStat=656` impõem uma espera mínima de
-  uma hora; o sistema nunca escolhe ou retrocede um NSU manualmente.
+  uma hora. O cursor só pode ser corrigido por administrador, em fluxo
+  auditado, e essa correção nunca reduz a janela de espera.
 - Produção só deve ser habilitada após homologação controlada, validação do
   certificado e aprovação operacional registrada.
 - Arquivar uma empresa não apaga XMLs, lotes, certificado cifrado nem auditoria.
@@ -108,7 +109,7 @@ texto no banco.
    fiscal e situação.
    - Para empresa que já tem distribuição em outro sistema, informe o último
      NSU processado. A próxima consulta continuará após ele; o valor é gravado
-     uma única vez, antes de qualquer solicitação fiscal.
+     como ponto de continuidade inicial.
    - Use **Homologação** para testes controlados.
    - Use **Produção** apenas para uma empresa autorizada e infraestrutura já
      liberada.
@@ -117,10 +118,14 @@ texto no banco.
 5. Ative a política somente depois de verificar certificado, ambiente e janela
    operacional.
 
-Para uma empresa já cadastrada sem histórico no sistema, use **Definir NSU
-inicial** na página da empresa antes da primeira solicitação. A tela exige a
-confirmação do CNPJ e o aceite da irreversibilidade para evitar uma consulta
-acidental desde o início da sequência.
+Quando houver correção operacional, uma pessoa administradora pode usar
+**Corrigir cursor NSU** na página da empresa para definir o último NSU (ou
+NSU inicial de continuidade), inclusive após haver consultas. A tela exige
+confirmação do CNPJ, justificativa e aceite de risco; registra o valor anterior
+e o novo valor na auditoria. Ela não apaga XMLs, lotes ou solicitações, não
+altera o máximo devolvido pela SEFAZ e não pode ser usada enquanto houver uma
+consulta em fila ou em execução. Um bloqueio `cStat=137` ou `656` continua
+válido até `next_allowed_at`.
 
 Situações disponíveis:
 
@@ -291,6 +296,9 @@ SEFAZ.
   essa operação não consulta a SEFAZ novamente.
 - Em uma falha incerta de rede ou persistência, o sistema conserva uma espera de
   uma hora antes de nova consulta. Revise o lote e o alerta antes de prosseguir.
+- Caso a contabilidade confirme que o cursor armazenado está incorreto, use
+  **Corrigir cursor NSU** com o valor de continuidade e uma justificativa. Não
+  edite o banco diretamente e não use a ação para contornar a espera da SEFAZ.
 
 Faça backup consistente do PostgreSQL e dos dois volumes privados. Restaurar
 somente o banco sem `NOTES_HOST_DIR` ou `CERTIFICATES_HOST_DIR` não recupera os

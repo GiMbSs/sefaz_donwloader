@@ -33,6 +33,10 @@ class InitialNsuConfigurationError(ValueError):
     """An initial NSU cannot be safely configured for this company."""
 
 
+class NsuCursorCorrectionError(ValueError):
+    """An administrative NSU correction cannot be applied safely."""
+
+
 @dataclass(frozen=True)
 class SyncRequestSubmission:
     request: SyncRequest
@@ -40,7 +44,7 @@ class SyncRequestSubmission:
 
 
 def normalize_initial_nsu(value: str) -> str:
-    """Normalize a known prior NSU without accepting a cursor mutation later."""
+    """Normalize a known NSU cursor to the SEFAZ 15-digit representation."""
 
     nsu = value.strip()
     if not nsu.isascii() or not nsu.isdigit() or not 1 <= len(nsu) <= 15:
@@ -118,6 +122,85 @@ def configure_initial_nsu(
                 "company_id": company.pk,
                 "environment": environment,
                 "service": control.service,
+            },
+        )
+    return control
+
+
+def correct_nsu_cursor(
+    *,
+    company_id: int,
+    environment: str,
+    last_nsu: str,
+    reason: str,
+    actor: User | None = None,
+) -> NsuControl:
+    """Apply an explicit, audited administrative cursor correction.
+
+    This is intentionally separate from first-time onboarding.  An office
+    administrator may correct a cursor after prior consultations, but never
+    while the worker has a queued or running request that could use the old
+    value.  SEFAZ cooldown state remains untouched.
+    """
+
+    normalized_nsu = normalize_initial_nsu(last_nsu)
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise NsuCursorCorrectionError(
+            "Registre o motivo da correção do cursor NSU."
+        )
+    if len(normalized_reason) > 500:
+        raise NsuCursorCorrectionError(
+            "O motivo da correção pode ter no máximo 500 caracteres."
+        )
+    if environment not in NsuControl.Environment.values:
+        raise NsuCursorCorrectionError("Ambiente fiscal inválido.")
+
+    with transaction.atomic():
+        company = (
+            ClientCompany.objects.select_for_update().filter(pk=company_id).first()
+        )
+        if company is None:
+            raise NsuCursorCorrectionError("Empresa cliente não encontrada.")
+        if environment != company.fiscal_environment:
+            raise NsuCursorCorrectionError(
+                "O cursor NSU deve usar o ambiente definido no cadastro da empresa."
+            )
+
+        active_request = (
+            SyncRequest.objects.select_for_update()
+            .filter(
+                company=company,
+                environment=environment,
+                status__in=(SyncRequest.Status.QUEUED, SyncRequest.Status.RUNNING),
+            )
+            .first()
+        )
+        if active_request is not None:
+            raise NsuCursorCorrectionError(
+                "Aguarde a solicitação fiscal em fila ou em execução terminar antes "
+                "de corrigir o cursor NSU."
+            )
+
+        control, _ = NsuControl.objects.select_for_update().get_or_create(
+            company=company,
+            environment=environment,
+            service="nfe_distribution",
+        )
+        previous_last_nsu = control.last_nsu
+        control.last_nsu = normalized_nsu
+        control.save(update_fields=("last_nsu", "updated_at"))
+        AuditLog.objects.create(
+            actor=actor,
+            action="fiscal.nsu_cursor_corrected",
+            target=f"fiscal.nsu_control:{control.pk}",
+            payload={
+                "company_id": company.pk,
+                "environment": environment,
+                "service": control.service,
+                "previous_last_nsu": previous_last_nsu,
+                "new_last_nsu": normalized_nsu,
+                "reason": normalized_reason,
             },
         )
     return control

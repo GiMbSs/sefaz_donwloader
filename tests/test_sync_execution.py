@@ -14,7 +14,9 @@ from apps.fiscal.services.sefaz import (
 from apps.fiscal.services.storage import FiscalStorage
 from apps.fiscal.services.sync import (
     InitialNsuConfigurationError,
+    NsuCursorCorrectionError,
     configure_initial_nsu,
+    correct_nsu_cursor,
     enqueue_due_synchronizations,
     request_synchronization,
 )
@@ -256,6 +258,66 @@ def test_initial_nsu_is_used_for_the_first_distribution_and_cannot_be_replaced(
             environment=NsuControl.Environment.HOMOLOGATION,
             initial_nsu="12346",
         )
+
+
+@pytest.mark.django_db
+def test_administrator_cursor_correction_can_follow_history_without_bypassing_hold():
+    now = timezone.now()
+    company = _company()
+    control = NsuControl.objects.create(
+        company=company,
+        environment=NsuControl.Environment.PRODUCTION,
+        last_nsu="000000000000001",
+        next_allowed_at=now + timedelta(hours=1),
+        blocked_reason="Aguardar janela da SEFAZ.",
+        last_status_code="656",
+    )
+    SyncRequest.objects.create(
+        company=company,
+        environment=NsuControl.Environment.PRODUCTION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        status=SyncRequest.Status.SUCCEEDED,
+    )
+
+    corrected = correct_nsu_cursor(
+        company_id=company.pk,
+        environment=NsuControl.Environment.PRODUCTION,
+        last_nsu="90267",
+        reason="Cursor confirmado pela contabilidade.",
+    )
+
+    assert corrected.pk == control.pk
+    assert corrected.last_nsu == "000000000090267"
+    assert corrected.next_allowed_at == control.next_allowed_at
+    assert corrected.blocked_reason == "Aguardar janela da SEFAZ."
+    assert corrected.last_status_code == "656"
+
+
+@pytest.mark.django_db
+def test_administrator_cursor_correction_rejects_a_queued_or_running_request():
+    company = _company()
+    control = NsuControl.objects.create(
+        company=company,
+        environment=NsuControl.Environment.PRODUCTION,
+        last_nsu="000000000000001",
+    )
+    SyncRequest.objects.create(
+        company=company,
+        environment=NsuControl.Environment.PRODUCTION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        status=SyncRequest.Status.QUEUED,
+    )
+
+    with pytest.raises(NsuCursorCorrectionError, match="fila ou em execução"):
+        correct_nsu_cursor(
+            company_id=company.pk,
+            environment=NsuControl.Environment.PRODUCTION,
+            last_nsu="90267",
+            reason="Tentativa durante operação ativa.",
+        )
+
+    control.refresh_from_db()
+    assert control.last_nsu == "000000000000001"
 
 
 @pytest.mark.django_db

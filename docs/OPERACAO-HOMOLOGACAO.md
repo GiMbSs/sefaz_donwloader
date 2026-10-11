@@ -10,7 +10,9 @@ por si só.
   teste. Não use dados fiscais reais somente como fixture.
 - Mantenha `SEFAZ_ENABLED_ENVIRONMENTS` vazio até concluir a pré-validação.
   Para o primeiro teste, o único valor permitido é `homologation`.
-- Não altere NSU, arquivos de lote ou estado do banco manualmente.
+- Não altere NSU, arquivos de lote ou estado do banco diretamente. Uma correção
+  de cursor só pode ocorrer pela ação administrativa auditada, com justificativa
+  e confirmação do CNPJ.
 - Interrompa o procedimento se houver migration pendente, volume inacessível,
   chave privada exposta ou backup/restauração ainda não verificados.
 - A habilitação de `production` depende de evidência de homologação aprovada e
@@ -66,7 +68,7 @@ por si só.
 
 | Sinal | Ação segura |
 | --- | --- |
-| `cStat=137` ou `656` | aguarde pelo menos uma hora e respeite `next_allowed_at`; não altere o NSU |
+| `cStat=137` ou `656` | aguarde pelo menos uma hora e respeite `next_allowed_at`; se o cursor confirmado estiver incorreto, corrija-o somente pela ação administrativa auditada, sem antecipar a consulta |
 | alerta de certificado | corrija o cadastro/validade do A1; nenhuma consulta foi enviada se o worker não tinha certificado válido |
 | `sefaz_transport_not_enabled` | confirme o ambiente em `.env`; não libere produção para resolver o alerta |
 | lote com falha local | use o reprocessamento local e preserve o lote bruto para análise |

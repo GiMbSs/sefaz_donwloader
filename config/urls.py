@@ -44,8 +44,13 @@ urlpatterns = [
         name="company-policy",
     ),
     path(
+        "empresas/<int:company_id>/nsu/",
+        views.CompanyNsuCursorView.as_view(),
+        name="company-nsu-cursor",
+    ),
+    path(
         "empresas/<int:company_id>/nsu-inicial/",
-        views.CompanyInitialNsuView.as_view(),
+        views.CompanyNsuCursorView.as_view(),
         name="company-initial-nsu",
     ),
     path(
