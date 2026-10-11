@@ -1,10 +1,12 @@
 from django.contrib import admin
 
+from apps.organizations.admin_access import ReadOnlyOfficeAdmin
+
 from .models import CertificateUpload, DigitalCertificate
 
 
 @admin.register(DigitalCertificate)
-class DigitalCertificateAdmin(admin.ModelAdmin):
+class DigitalCertificateAdmin(ReadOnlyOfficeAdmin):
     list_display = (
         "company",
         "serial_number",
@@ -39,7 +41,7 @@ class DigitalCertificateAdmin(admin.ModelAdmin):
 
 
 @admin.register(CertificateUpload)
-class CertificateUploadAdmin(admin.ModelAdmin):
+class CertificateUploadAdmin(ReadOnlyOfficeAdmin):
     list_display = ("company", "status", "uploaded_by", "created_at", "expires_at")
     list_filter = ("status",)
     search_fields = ("company__legal_name", "company__tax_identifier", "filename")

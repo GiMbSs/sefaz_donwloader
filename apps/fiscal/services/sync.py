@@ -81,11 +81,15 @@ def configure_initial_nsu(
             raise InitialNsuConfigurationError(
                 "O NSU inicial deve usar o ambiente definido no cadastro da empresa."
             )
-        if NsuControl.objects.select_for_update().filter(
-            company=company,
-            environment=environment,
-            service="nfe_distribution",
-        ).exists():
+        if (
+            NsuControl.objects.select_for_update()
+            .filter(
+                company=company,
+                environment=environment,
+                service="nfe_distribution",
+            )
+            .exists()
+        ):
             raise InitialNsuConfigurationError(
                 "O NSU inicial já foi definido e não pode ser alterado."
             )
@@ -146,9 +150,7 @@ def correct_nsu_cursor(
     normalized_nsu = normalize_initial_nsu(last_nsu)
     normalized_reason = reason.strip()
     if not normalized_reason:
-        raise NsuCursorCorrectionError(
-            "Registre o motivo da correção do cursor NSU."
-        )
+        raise NsuCursorCorrectionError("Registre o motivo da correção do cursor NSU.")
     if len(normalized_reason) > 500:
         raise NsuCursorCorrectionError(
             "O motivo da correção pode ter no máximo 500 caracteres."
@@ -280,9 +282,7 @@ def request_synchronization(
             environment=environment,
             trigger=trigger,
             status=(
-                SyncRequest.Status.WAITING
-                if is_blocked
-                else SyncRequest.Status.QUEUED
+                SyncRequest.Status.WAITING if is_blocked else SyncRequest.Status.QUEUED
             ),
             requested_by=actor,
             result_detail=(
@@ -334,28 +334,30 @@ def enqueue_due_synchronizations(*, now: datetime | None = None) -> int:
 def _release_waiting_synchronizations(*, now: datetime) -> int:
     """Resume requests only after the persisted SEFAZ wait expires."""
     released = 0
-    with transaction.atomic():
-        controls = list(
-            NsuControl.objects.select_for_update()
-            .filter(
-                service="nfe_distribution",
-                next_allowed_at__isnull=False,
-                next_allowed_at__lte=now,
-            )
-            .only("pk", "company_id", "environment")
-        )
-        for control in controls:
+    controls = list(
+        NsuControl.objects.filter(
+            service="nfe_distribution",
+            next_allowed_at__isnull=False,
+            next_allowed_at__lte=now,
+        ).only("pk", "company_id", "environment")
+    )
+    for candidate in controls:
+        with transaction.atomic():
+            ClientCompany.objects.select_for_update().get(pk=candidate.company_id)
             sync_request = (
                 SyncRequest.objects.select_for_update()
                 .filter(
-                    company_id=control.company_id,
-                    environment=control.environment,
+                    company_id=candidate.company_id,
+                    environment=candidate.environment,
                     status=SyncRequest.Status.WAITING,
                 )
                 .order_by("requested_at")
                 .first()
             )
             if sync_request is None:
+                continue
+            control = NsuControl.objects.select_for_update().get(pk=candidate.pk)
+            if control.next_allowed_at is not None and control.next_allowed_at > now:
                 continue
             sync_request.status = SyncRequest.Status.QUEUED
             sync_request.result_detail = "Consulta liberada pela janela fiscal."
@@ -466,6 +468,8 @@ def _is_due(policy: SyncPolicy, now: datetime) -> bool:
     except Exception:
         return False
     local_now = now.astimezone(policy_timezone)
+    if policy.weekdays and local_now.weekday() not in policy.weekdays:
+        return False
     if policy.frequency == SyncPolicy.Frequency.WEEKLY:
         if local_now.weekday() not in policy.weekdays:
             return False

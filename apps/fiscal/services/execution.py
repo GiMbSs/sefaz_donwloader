@@ -29,8 +29,21 @@ from apps.fiscal.services.sefaz import (
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.operations.models import AuditLog
 from apps.operations.services import open_operation_alert
+from apps.organizations.models import ClientCompany
 
 logger = logging.getLogger(__name__)
+
+
+def _lock_request_company(sync_request_id: int) -> bool:
+    company_id = (
+        SyncRequest.objects.filter(pk=sync_request_id)
+        .values_list("company_id", flat=True)
+        .first()
+    )
+    if company_id is None:
+        return False
+    ClientCompany.objects.select_for_update().get(pk=company_id)
+    return True
 
 
 @dataclass(frozen=True)
@@ -249,8 +262,10 @@ def _claim_sync_request(
     *, sync_request_id: int, now: datetime
 ) -> ClaimedSynchronization | str:
     with transaction.atomic():
+        if not _lock_request_company(sync_request_id):
+            return "missing"
         sync_request = (
-            SyncRequest.objects.select_for_update()
+            SyncRequest.objects.select_for_update(of=("self",))
             .select_related("company")
             .filter(pk=sync_request_id)
             .first()
@@ -260,6 +275,34 @@ def _claim_sync_request(
         if sync_request.status != SyncRequest.Status.QUEUED:
             return sync_request.status
 
+        policy = SyncPolicy.objects.filter(company_id=sync_request.company_id).first()
+        if (
+            sync_request.company.status != sync_request.company.Status.ACTIVE
+            or sync_request.environment != sync_request.company.fiscal_environment
+            or policy is None
+            or not policy.is_active
+            or (
+                sync_request.trigger == SyncRequest.Trigger.SCHEDULED
+                and policy.mode == SyncPolicy.Mode.MANUAL
+            )
+            or (
+                sync_request.trigger == SyncRequest.Trigger.MANUAL
+                and policy.mode == SyncPolicy.Mode.AUTOMATIC
+            )
+        ):
+            _finish_request_without_remote_call(
+                sync_request_id=sync_request.pk,
+                expected_status=SyncRequest.Status.QUEUED,
+                now=now,
+                detail="Cadastro, ambiente ou política mudou após o pedido. "
+                "A consulta não foi enviada à SEFAZ.",
+                reason="request_no_longer_eligible",
+                alert_code="request_no_longer_eligible",
+                alert_title="Pedido fiscal deixou de ser elegível",
+                severity="warning",
+            )
+            return SyncRequest.Status.FAILED
+
         control = NsuControl.objects.select_for_update().get(
             company_id=sync_request.company_id,
             environment=sync_request.environment,
@@ -268,8 +311,7 @@ def _claim_sync_request(
         if control.next_allowed_at is not None and control.next_allowed_at > now:
             sync_request.status = SyncRequest.Status.WAITING
             sync_request.result_detail = (
-                "Consulta permitida após "
-                f"{control.next_allowed_at.isoformat()}."
+                f"Consulta permitida após {control.next_allowed_at.isoformat()}."
             )
             sync_request.save(update_fields=("status", "result_detail"))
             AuditLog.objects.create(
@@ -337,10 +379,10 @@ def _finish_succeeded(
     *, sync_request_id: int, batch: DistributionBatch, now: datetime
 ) -> None:
     with transaction.atomic():
+        if not _lock_request_company(sync_request_id):
+            return
         sync_request = (
-            SyncRequest.objects.select_for_update()
-            .filter(pk=sync_request_id)
-            .first()
+            SyncRequest.objects.select_for_update().filter(pk=sync_request_id).first()
         )
         if sync_request is None or sync_request.status != SyncRequest.Status.RUNNING:
             return
@@ -389,10 +431,10 @@ def _finish_failed(
     hold_cursor: bool,
 ) -> None:
     with transaction.atomic():
+        if not _lock_request_company(sync_request_id):
+            return
         sync_request = (
-            SyncRequest.objects.select_for_update()
-            .filter(pk=sync_request_id)
-            .first()
+            SyncRequest.objects.select_for_update().filter(pk=sync_request_id).first()
         )
         if sync_request is None or sync_request.status != SyncRequest.Status.RUNNING:
             return
@@ -445,10 +487,10 @@ def _finish_request_without_remote_call(
     severity: str,
 ) -> None:
     with transaction.atomic():
+        if not _lock_request_company(sync_request_id):
+            return
         sync_request = (
-            SyncRequest.objects.select_for_update()
-            .filter(pk=sync_request_id)
-            .first()
+            SyncRequest.objects.select_for_update().filter(pk=sync_request_id).first()
         )
         if sync_request is None or sync_request.status != expected_status:
             return

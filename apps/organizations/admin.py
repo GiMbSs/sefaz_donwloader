@@ -5,17 +5,19 @@ from django.template.response import TemplateResponse
 
 from apps.operations.models import AuditLog
 
+from .admin_access import InstallationAdminMixin, OfficeScopedAdmin
 from .models import AccountingOffice, ClientCompany, OfficeMembership
 
 
 @admin.register(AccountingOffice)
-class AccountingOfficeAdmin(admin.ModelAdmin):
+class AccountingOfficeAdmin(InstallationAdminMixin, admin.ModelAdmin):
     list_display = ("legal_name", "tax_identifier", "created_at")
     search_fields = ("legal_name", "tax_identifier")
 
 
 @admin.register(ClientCompany)
-class ClientCompanyAdmin(admin.ModelAdmin):
+class ClientCompanyAdmin(OfficeScopedAdmin):
+    office_lookup = "office"
     list_display = (
         "legal_name",
         "tax_identifier",
@@ -97,7 +99,7 @@ class ClientCompanyAdmin(admin.ModelAdmin):
 
 
 @admin.register(OfficeMembership)
-class OfficeMembershipAdmin(admin.ModelAdmin):
+class OfficeMembershipAdmin(InstallationAdminMixin, admin.ModelAdmin):
     list_display = ("user", "office", "role", "is_active")
     list_filter = ("role", "is_active")
     search_fields = ("user__email", "office__legal_name", "office__tax_identifier")

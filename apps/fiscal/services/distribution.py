@@ -12,9 +12,9 @@ import binascii
 import gzip
 import hashlib
 import io
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Iterable
 
 from django.conf import settings
 from django.db import transaction
@@ -35,6 +35,7 @@ from apps.fiscal.services.schemas import (
 )
 from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.operations.services import open_operation_alert
+from apps.organizations.models import ClientCompany
 
 MAX_COMPRESSED_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_DECOMPRESSED_DOCUMENT_BYTES = 10 * 1024 * 1024
@@ -160,8 +161,12 @@ def persist_distribution_response(
     created_paths: list[str] = []
     try:
         with transaction.atomic():
+            company_id = NsuControl.objects.values_list("company_id", flat=True).get(
+                pk=control_id
+            )
+            ClientCompany.objects.select_for_update().get(pk=company_id)
             control = (
-                NsuControl.objects.select_for_update()
+                NsuControl.objects.select_for_update(of=("self",))
                 .select_related("company")
                 .get(pk=control_id)
             )
@@ -181,6 +186,7 @@ def persist_distribution_response(
                     raw_response,
                     company=control.company,
                     category="distribution",
+                    environment=control.environment,
                 )
                 created_paths.append(raw_path)
                 soap_path = ""
@@ -190,6 +196,7 @@ def persist_distribution_response(
                         soap_response,
                         company=control.company,
                         category="soap",
+                        environment=control.environment,
                     )
                     created_paths.append(soap_path)
                 batch = DistributionBatch.objects.create(
@@ -288,8 +295,13 @@ def _process_archived_distribution_batch(
     batch: DistributionBatch | None = None
     try:
         with transaction.atomic():
+            company_id, control_id = DistributionBatch.objects.values_list(
+                "company_id", "nsu_control_id"
+            ).get(pk=batch_id)
+            ClientCompany.objects.select_for_update().get(pk=company_id)
+            NsuControl.objects.select_for_update().get(pk=control_id)
             batch = (
-                DistributionBatch.objects.select_for_update()
+                DistributionBatch.objects.select_for_update(of=("self",))
                 .select_related("company", "nsu_control")
                 .get(pk=batch_id)
             )
@@ -389,29 +401,12 @@ def _persist_document(
     model = _extract_model(root, access_key)
     kind = _document_kind(document_root)
     xml_sha256 = hashlib.sha256(decoded.xml_payload).hexdigest()
-    relative_path = storage.write_document(
-        company_id=batch.company_id,
-        company=batch.company,
-        model=model,
-        access_key=access_key,
-        kind=kind,
-        discriminator=xml_sha256[:16],
-        payload=decoded.xml_payload,
-    )
-    fiscal_document, created = FiscalDocument.objects.get_or_create(
+    fiscal_document = FiscalDocument.objects.filter(
         company=batch.company,
         access_key=access_key,
-        defaults={
-            "model": model,
-            "kind": kind,
-            "schema_name": decoded.schema_name,
-            "document_root": document_root,
-            "xml_sha256": xml_sha256,
-            "xml_path": relative_path,
-            "validation_status": validation_status,
-            "validation_error": validation_error,
-        },
-    )
+        environment=batch.nsu_control.environment,
+    ).first()
+    created = fiscal_document is None
     is_duplicate = not created and fiscal_document.xml_sha256 == xml_sha256
     should_replace = not created and (
         _kind_rank(kind) > _kind_rank(fiscal_document.kind)
@@ -420,6 +415,35 @@ def _persist_document(
             and fiscal_document.xml_sha256 != xml_sha256
         )
     )
+    relative_path = None
+    if created or should_replace:
+        relative_path = storage.write_document(
+            company_id=batch.company_id,
+            company=batch.company,
+            model=model,
+            access_key=access_key,
+            kind=kind,
+            discriminator=xml_sha256[:16],
+            payload=decoded.xml_payload,
+            versioned=True,
+            environment=batch.nsu_control.environment,
+        )
+    if created:
+        fiscal_document = FiscalDocument.objects.create(
+            company=batch.company,
+            access_key=access_key,
+            environment=batch.nsu_control.environment,
+            **{
+                "model": model,
+                "kind": kind,
+                "schema_name": decoded.schema_name,
+                "document_root": document_root,
+                "xml_sha256": xml_sha256,
+                "xml_path": relative_path,
+                "validation_status": validation_status,
+                "validation_error": validation_error,
+            },
+        )
     if should_replace:
         fiscal_document.kind = kind
         fiscal_document.schema_name = decoded.schema_name
@@ -453,9 +477,6 @@ def _persist_document(
             else DistributionItem.ProcessingStatus.STORED
         ),
     )
-    if not created and not should_replace:
-        storage.delete(relative_path)
-        return None
     return relative_path
 
 

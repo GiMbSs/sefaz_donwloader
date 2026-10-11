@@ -1,10 +1,19 @@
 from django.contrib import admin
 
-from .models import DistributionBatch, DistributionItem, FiscalDocument, NsuControl, SyncPolicy, SyncRequest
+from apps.organizations.admin_access import ReadOnlyOfficeAdmin
+
+from .models import (
+    DistributionBatch,
+    DistributionItem,
+    FiscalDocument,
+    NsuControl,
+    SyncPolicy,
+    SyncRequest,
+)
 
 
 @admin.register(SyncPolicy)
-class SyncPolicyAdmin(admin.ModelAdmin):
+class SyncPolicyAdmin(ReadOnlyOfficeAdmin):
     list_display = (
         "company",
         "mode",
@@ -19,16 +28,28 @@ class SyncPolicyAdmin(admin.ModelAdmin):
 
 
 @admin.register(NsuControl)
-class NsuControlAdmin(admin.ModelAdmin):
-    list_display = ("company", "environment", "last_nsu", "maximum_nsu", "next_allowed_at")
+class NsuControlAdmin(ReadOnlyOfficeAdmin):
+    list_display = (
+        "company",
+        "environment",
+        "last_nsu",
+        "maximum_nsu",
+        "next_allowed_at",
+    )
     list_filter = ("environment", "service")
     search_fields = ("company__legal_name", "company__tax_identifier")
     list_select_related = ("company",)
-    readonly_fields = ("last_nsu", "maximum_nsu", "next_allowed_at", "last_status_code", "updated_at")
+    readonly_fields = (
+        "last_nsu",
+        "maximum_nsu",
+        "next_allowed_at",
+        "last_status_code",
+        "updated_at",
+    )
 
 
 @admin.register(SyncRequest)
-class SyncRequestAdmin(admin.ModelAdmin):
+class SyncRequestAdmin(ReadOnlyOfficeAdmin):
     list_display = ("company", "environment", "trigger", "status", "requested_at")
     list_filter = ("environment", "trigger", "status")
     search_fields = ("company__legal_name", "company__tax_identifier")
@@ -53,10 +74,20 @@ class DistributionItemInline(admin.TabularInline):
 
 
 @admin.register(DistributionBatch)
-class DistributionBatchAdmin(admin.ModelAdmin):
-    list_display = ("company", "status_code", "document_count", "processing_status", "created_at")
+class DistributionBatchAdmin(ReadOnlyOfficeAdmin):
+    list_display = (
+        "company",
+        "status_code",
+        "document_count",
+        "processing_status",
+        "created_at",
+    )
     list_filter = ("status_code", "processing_status")
-    search_fields = ("company__legal_name", "company__tax_identifier", "response_sha256")
+    search_fields = (
+        "company__legal_name",
+        "company__tax_identifier",
+        "response_sha256",
+    )
     list_select_related = ("company", "nsu_control", "sync_request")
     readonly_fields = (
         "company",
@@ -85,9 +116,16 @@ class DistributionBatchAdmin(admin.ModelAdmin):
 
 
 @admin.register(FiscalDocument)
-class FiscalDocumentAdmin(admin.ModelAdmin):
-    list_display = ("company", "access_key", "model", "kind", "validation_status")
-    list_filter = ("model", "kind", "validation_status")
+class FiscalDocumentAdmin(ReadOnlyOfficeAdmin):
+    list_display = (
+        "company",
+        "environment",
+        "access_key",
+        "model",
+        "kind",
+        "validation_status",
+    )
+    list_filter = ("environment", "model", "kind", "validation_status")
     search_fields = ("company__legal_name", "company__tax_identifier", "access_key")
     list_select_related = ("company",)
     readonly_fields = (

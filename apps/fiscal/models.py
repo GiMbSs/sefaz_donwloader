@@ -18,7 +18,9 @@ class SyncPolicy(models.Model):
         WEEKLY = "weekly", "Semanal"
         MONTHLY = "monthly", "Mensal"
 
-    company = models.OneToOneField(ClientCompany, on_delete=models.CASCADE, related_name="sync_policy")
+    company = models.OneToOneField(
+        ClientCompany, on_delete=models.CASCADE, related_name="sync_policy"
+    )
     mode = models.CharField("modo", max_length=16, choices=Mode, default=Mode.AUTOMATIC)
     frequency = models.CharField(
         "recorrência",
@@ -27,11 +29,15 @@ class SyncPolicy(models.Model):
         default=Frequency.DAILY,
     )
     scheduled_time = models.TimeField("horário", null=True, blank=True)
-    timezone = models.CharField("fuso horário", max_length=64, default="America/Fortaleza")
+    timezone = models.CharField(
+        "fuso horário", max_length=64, default="America/Fortaleza"
+    )
     weekdays = models.JSONField("dias da semana", default=list, blank=True)
     monthday = models.PositiveSmallIntegerField("dia do mês", default=1)
     is_active = models.BooleanField("ativa", default=True)
-    last_requested_at = models.DateTimeField("última solicitação", null=True, blank=True)
+    last_requested_at = models.DateTimeField(
+        "última solicitação", null=True, blank=True
+    )
     last_finished_at = models.DateTimeField("última conclusão", null=True, blank=True)
     last_result = models.CharField("último resultado", max_length=32, blank=True)
     failure_count = models.PositiveIntegerField("falhas consecutivas", default=0)
@@ -42,6 +48,9 @@ class SyncPolicy(models.Model):
         verbose_name = "política de sincronização"
         verbose_name_plural = "políticas de sincronização"
 
+    def __str__(self) -> str:
+        return f"Política da empresa {self.company_id}: {self.get_mode_display()}"
+
     def clean(self) -> None:
         super().clean()
         try:
@@ -50,8 +59,13 @@ class SyncPolicy(models.Model):
             raise ValidationError(
                 {"timezone": "Informe um fuso horário IANA válido."}
             ) from error
-        if self.mode in {self.Mode.AUTOMATIC, self.Mode.HYBRID} and self.scheduled_time is None:
-            raise ValidationError({"scheduled_time": "Informe o horário da sincronização automática."})
+        if (
+            self.mode in {self.Mode.AUTOMATIC, self.Mode.HYBRID}
+            and self.scheduled_time is None
+        ):
+            raise ValidationError(
+                {"scheduled_time": "Informe o horário da sincronização automática."}
+            )
         if not isinstance(self.weekdays, list) or any(
             not isinstance(day, int) or day not in range(7) for day in self.weekdays
         ):
@@ -71,12 +85,16 @@ class NsuControl(models.Model):
         PRODUCTION = "production", "Produção"
         HOMOLOGATION = "homologation", "Homologação"
 
-    company = models.ForeignKey(ClientCompany, on_delete=models.PROTECT, related_name="nsu_controls")
+    company = models.ForeignKey(
+        ClientCompany, on_delete=models.PROTECT, related_name="nsu_controls"
+    )
     environment = models.CharField("ambiente", max_length=16, choices=Environment)
     service = models.CharField("serviço", max_length=64, default="nfe_distribution")
     last_nsu = models.CharField("último NSU", max_length=15, blank=True)
     maximum_nsu = models.CharField("máximo NSU", max_length=15, blank=True)
-    next_allowed_at = models.DateTimeField("próxima consulta permitida", null=True, blank=True)
+    next_allowed_at = models.DateTimeField(
+        "próxima consulta permitida", null=True, blank=True
+    )
     blocked_reason = models.CharField("motivo do bloqueio", max_length=255, blank=True)
     last_status_code = models.CharField("último cStat", max_length=8, blank=True)
     updated_at = models.DateTimeField("atualizado em", auto_now=True)
@@ -97,6 +115,9 @@ class NsuControl(models.Model):
             )
         ]
 
+    def __str__(self) -> str:
+        return f"NSU da empresa {self.company_id}: {self.get_environment_display()}"
+
 
 class SyncRequest(models.Model):
     class Trigger(models.TextChoices):
@@ -111,10 +132,16 @@ class SyncRequest(models.Model):
         FAILED = "failed", "Falhou"
         COALESCED = "coalesced", "Agrupada"
 
-    company = models.ForeignKey(ClientCompany, on_delete=models.PROTECT, related_name="sync_requests")
-    environment = models.CharField("ambiente", max_length=16, choices=NsuControl.Environment)
+    company = models.ForeignKey(
+        ClientCompany, on_delete=models.PROTECT, related_name="sync_requests"
+    )
+    environment = models.CharField(
+        "ambiente", max_length=16, choices=NsuControl.Environment
+    )
     trigger = models.CharField("origem", max_length=16, choices=Trigger)
-    status = models.CharField("situação", max_length=16, choices=Status, default=Status.QUEUED)
+    status = models.CharField(
+        "situação", max_length=16, choices=Status, default=Status.QUEUED
+    )
     requested_by = models.ForeignKey(
         "accounts.User",
         on_delete=models.SET_NULL,
@@ -144,6 +171,9 @@ class SyncRequest(models.Model):
             ),
         ]
 
+    def __str__(self) -> str:
+        return f"Solicitação {self.pk}: {self.get_status_display()}"
+
 
 class DistributionBatch(models.Model):
     class ProcessingStatus(models.TextChoices):
@@ -152,8 +182,12 @@ class DistributionBatch(models.Model):
         INVALID = "invalid", "Inválido"
         FAILED = "failed", "Falhou"
 
-    company = models.ForeignKey(ClientCompany, on_delete=models.PROTECT, related_name="distribution_batches")
-    nsu_control = models.ForeignKey(NsuControl, on_delete=models.PROTECT, related_name="batches")
+    company = models.ForeignKey(
+        ClientCompany, on_delete=models.PROTECT, related_name="distribution_batches"
+    )
+    nsu_control = models.ForeignKey(
+        NsuControl, on_delete=models.PROTECT, related_name="batches"
+    )
     sync_request = models.ForeignKey(
         SyncRequest,
         on_delete=models.SET_NULL,
@@ -199,6 +233,9 @@ class DistributionBatch(models.Model):
             ),
         ]
 
+    def __str__(self) -> str:
+        return f"Lote {self.pk}: cStat {self.status_code}"
+
 
 class FiscalDocument(models.Model):
     class Kind(models.TextChoices):
@@ -212,7 +249,16 @@ class FiscalDocument(models.Model):
         VALID = "valid", "Válido"
         INVALID = "invalid", "Inválido"
 
-    company = models.ForeignKey(ClientCompany, on_delete=models.PROTECT, related_name="fiscal_documents")
+    company = models.ForeignKey(
+        ClientCompany, on_delete=models.PROTECT, related_name="fiscal_documents"
+    )
+    environment = models.CharField(
+        "ambiente",
+        max_length=16,
+        choices=NsuControl.Environment,
+        blank=True,
+        default="",
+    )
     access_key = models.CharField(max_length=44)
     model = models.CharField(max_length=2, blank=True)
     kind = models.CharField(max_length=16, choices=Kind, default=Kind.UNKNOWN)
@@ -234,8 +280,8 @@ class FiscalDocument(models.Model):
         verbose_name_plural = "documentos fiscais"
         constraints = [
             models.UniqueConstraint(
-                fields=("company", "access_key"),
-                name="unique_fiscal_document_per_company_access_key",
+                fields=("company", "environment", "access_key"),
+                name="unique_fiscal_document_per_company_env_key",
             ),
         ]
         indexes = [
@@ -249,6 +295,9 @@ class FiscalDocument(models.Model):
             ),
         ]
 
+    def __str__(self) -> str:
+        return f"{self.access_key} ({self.get_environment_display() or 'Legado'})"
+
 
 class DistributionItem(models.Model):
     class ProcessingStatus(models.TextChoices):
@@ -256,7 +305,9 @@ class DistributionItem(models.Model):
         REJECTED = "rejected", "Rejeitado"
         DUPLICATE = "duplicate", "Duplicado"
 
-    batch = models.ForeignKey(DistributionBatch, on_delete=models.CASCADE, related_name="items")
+    batch = models.ForeignKey(
+        DistributionBatch, on_delete=models.CASCADE, related_name="items"
+    )
     nsu = models.CharField(max_length=15)
     schema_name = models.CharField(max_length=128)
     compressed_sha256 = models.CharField(max_length=64)
@@ -276,6 +327,11 @@ class DistributionItem(models.Model):
         verbose_name = "item de distribuição"
         verbose_name_plural = "itens de distribuição"
         constraints = [
-            models.UniqueConstraint(fields=("batch", "nsu"), name="unique_nsu_per_distribution_batch"),
+            models.UniqueConstraint(
+                fields=("batch", "nsu"), name="unique_nsu_per_distribution_batch"
+            ),
         ]
         indexes = [models.Index(fields=("nsu",), name="fiscal_dist_nsu_7fb3db_idx")]
+
+    def __str__(self) -> str:
+        return f"Item NSU {self.nsu} do lote {self.batch_id}"

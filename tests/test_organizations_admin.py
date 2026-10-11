@@ -7,7 +7,7 @@ from django.urls import reverse
 from apps.accounts.models import User
 from apps.fiscal.models import NsuControl
 from apps.operations.models import AuditLog
-from apps.organizations.models import AccountingOffice, ClientCompany
+from apps.organizations.models import AccountingOffice, ClientCompany, OfficeMembership
 
 
 def _company() -> ClientCompany:
@@ -46,6 +46,7 @@ def test_django_admin_promotes_homologation_without_deleting_its_history(client)
         last_nsu="000000000012345",
     )
     user = _admin_user()
+    OfficeMembership.objects.create(office=company.office, user=user, role="admin")
     client.force_login(user)
     changelist_url = reverse("admin:organizations_clientcompany_changelist")
 

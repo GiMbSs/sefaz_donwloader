@@ -64,9 +64,14 @@ separada por escritório e empresa:
 <volume>/escritorios/escritorio_<cnpj-do-escritorio>/
   empresa_<cnpj-da-empresa>/
     certificado/     # apenas no volume privado; PFX e senha cifrados
-    xmls/             # apenas no volume de notas; ano/mes/modelo/chave.xml
-    lotes/            # respostas de distribuição recebidas
-    soap/             # envelopes/respostas SOAP arquivados
+    production/       # novos documentos, lotes e SOAP de Produção
+      xmls/           # ano/mes/modelo/chave.versao.xml
+      lotes/
+      soap/
+    homologation/     # mesma estrutura para Homologação
+    xmls/             # caminhos históricos continuam disponíveis
+    lotes/            # lotes históricos preservados
+    soap/             # respostas históricas preservadas
     txt/              # reservado para relatórios TXT versionados
 ```
 
@@ -299,6 +304,62 @@ SEFAZ.
 - Caso a contabilidade confirme que o cursor armazenado está incorreto, use
   **Corrigir cursor NSU** com o valor de continuidade e uma justificativa. Não
   edite o banco diretamente e não use a ação para contornar a espera da SEFAZ.
+
+### Solicitação interrompida em execução
+
+Uma solicitação que ficou em execução após queda do worker não é repetida
+automaticamente: o envio anterior pode ter chegado à SEFAZ. Após confirmar que
+o pedido foi iniciado há pelo menos uma hora:
+
+1. Pare o scheduler e o worker antigo, garantindo que nenhuma réplica desse
+   worker continua executando o pedido:
+
+   ```bash
+   docker compose stop -t 120 scheduler worker
+   ```
+
+2. Use o ID do pedido, o e-mail de um administrador ativo da empresa e uma
+   justificativa sem credenciais:
+
+   ```bash
+   docker compose exec web python manage.py recover_sync_request --request-id 123 --actor-email admin@example.com --reason "Worker interrompido; lotes revisados" --confirm-worker-stopped
+   ```
+
+   Se já houver lote processado, o pedido é concluído com esse resultado.
+   Caso contrário, ele é encerrado como falha com nova espera mínima de uma
+   hora, sem alterar o NSU nem enviar nova consulta. Lotes recebidos continuam
+   disponíveis para revisão e reprocessamento local.
+
+3. Reinicie os serviços e respeite a próxima consulta permitida:
+
+   ```bash
+   docker compose start worker scheduler
+   ```
+
+O Django Admin respeita o escritório do administrador. Controles fiscais,
+certificados e auditoria são somente leitura; correções operacionais usam
+as telas e serviços auditados. Superusuários mantêm a visão da instalação;
+usuários, grupos e vínculos são administrados somente por superusuários.
+
+### Atualização com separação de documentos por ambiente
+
+A migration `fiscal.0007_document_environment` mantém os caminhos e IDs
+históricos. Documentos vinculados a um único ambiente são classificados; os
+sem evidência ou com vínculos mistos permanecem como legados. Novas gravações
+usam ambiente e arquivo versionado, sem sobrescrever XMLs anteriores.
+Faça backup do banco e dos volumes antes de aplicar a migration. Após existir
+a mesma chave nos dois ambientes, a constraint antiga impede um simples
+rollback da migration; nesse caso, restaure o backup consistente.
+
+Atualize com uma breve parada de todos os processos que escrevem no banco,
+evitando executar o código anterior durante a alteração do schema:
+
+```bash
+docker compose stop -t 120 web scheduler worker
+docker compose up -d --build
+```
+
+O serviço `migrations` aplica a atualização antes da inicialização da aplicação.
 
 Faça backup consistente do PostgreSQL e dos dois volumes privados. Restaurar
 somente o banco sem `NOTES_HOST_DIR` ou `CERTIFICATES_HOST_DIR` não recupera os

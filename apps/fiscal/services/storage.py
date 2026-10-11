@@ -37,10 +37,15 @@ class FiscalStorage:
         *,
         company: ClientCompany | None = None,
         category: str = "distribution",
+        environment: str = "",
     ) -> str:
         if category not in {"distribution", "soap"}:
             raise FiscalStorageError("Response storage category is not supported.")
         company_root = self._company_directory(company=company, company_id=company_id)
+        if environment:
+            if environment not in {"production", "homologation"}:
+                raise FiscalStorageError("Invalid fiscal environment.")
+            company_root /= environment
         directory = "lotes" if category == "distribution" else "soap"
         relative_path = company_root / directory / f"{category}-{uuid.uuid4()}.xml"
         self._write(relative_path, response)
@@ -58,6 +63,8 @@ class FiscalStorage:
         issued_year: int = 0,
         issued_month: int = 0,
         payload: bytes,
+        versioned: bool = False,
+        environment: str = "",
     ) -> str:
         if (
             not access_key.isascii()
@@ -81,8 +88,15 @@ class FiscalStorage:
             raise FiscalStorageError(
                 "Document kind requires a safe filename discriminator."
             )
+        if versioned:
+            filename = f"{Path(filename).stem}.{uuid.uuid4().hex}.xml"
+        company_root = self._company_directory(company=company, company_id=company_id)
+        if environment:
+            if environment not in {"production", "homologation"}:
+                raise FiscalStorageError("Invalid fiscal environment.")
+            company_root /= environment
         relative_path = (
-            self._company_directory(company=company, company_id=company_id)
+            company_root
             / "xmls"
             / f"{issued_year:04d}"
             / f"{issued_month:02d}"
