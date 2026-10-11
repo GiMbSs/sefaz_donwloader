@@ -18,12 +18,12 @@
         <div class="field-group">
           <label for="{{ form.username.id_for_label }}">E-mail</label>
           {{ form.username }}
-          {{ form.username.errors }}
+          {% if form.username.errors %}<div class="field-error" id="{{ form.username.auto_id }}_error">{{ form.username.errors }}</div>{% endif %}
         </div>
         <div class="field-group">
           <label for="{{ form.password.id_for_label }}">Senha</label>
           {{ form.password }}
-          {{ form.password.errors }}
+          {% if form.password.errors %}<div class="field-error" id="{{ form.password.auto_id }}_error">{{ form.password.errors }}</div>{% endif %}
         </div>
         <input type="hidden" name="next" value="{{ next }}">
         <button class="button button-primary" type="submit">Entrar</button>

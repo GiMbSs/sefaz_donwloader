@@ -15,12 +15,7 @@
       {% csrf_token %}
       {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
       {% for field in form %}
-        <div class="field-group full-row">
-          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
-          {{ field }}
-          {% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}
-          {% if field.errors %}<div class="field-error">{{ field.errors }}</div>{% endif %}
-        </div>
+        {% include "operations/form_field.html" with field=field wide=True %}
       {% endfor %}
       <div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Enviar para processamento seguro</button></div>
     </form>
