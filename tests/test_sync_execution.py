@@ -472,6 +472,9 @@ def test_sefaz_consumption_block_creates_a_warning_alert(tmp_path):
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
+    "trigger", [SyncRequest.Trigger.MANUAL, SyncRequest.Trigger.SCHEDULED]
+)
+@pytest.mark.parametrize(
     ("returned_nsu", "nsu_reason", "suggested", "auto_enabled"),
     [
         ("000000000090267", True, True, False),
@@ -482,7 +485,7 @@ def test_sefaz_consumption_block_creates_a_warning_alert(tmp_path):
     ],
 )
 def test_consumption_alert_suggests_only_a_sefaz_cursor_mismatch(
-    tmp_path, returned_nsu, nsu_reason, suggested, auto_enabled
+    tmp_path, returned_nsu, nsu_reason, suggested, auto_enabled, trigger
 ):
     now = timezone.now()
     company = _company()
@@ -491,7 +494,7 @@ def test_consumption_alert_suggests_only_a_sefaz_cursor_mismatch(
     submission = request_synchronization(
         company_id=company.pk,
         environment=NsuControl.Environment.PRODUCTION,
-        trigger=SyncRequest.Trigger.MANUAL,
+        trigger=trigger,
         dispatch=False,
         now=now,
     )
@@ -520,6 +523,13 @@ def test_consumption_alert_suggests_only_a_sefaz_cursor_mismatch(
     assert alert.context["returned_last_nsu"] == (returned_nsu or "")
     assert alert.context["environment"] == "production"
     auto_corrected = auto_enabled and suggested
+    retry_after_wait = auto_corrected or (
+        trigger == SyncRequest.Trigger.SCHEDULED and nsu_reason
+    )
+    assert result == (
+        SyncRequest.Status.WAITING if retry_after_wait else SyncRequest.Status.SUCCEEDED
+    )
+    assert alert.context["retry_after_wait"] is retry_after_wait
     if auto_corrected:
         assert "corrigido automaticamente" in alert.message
         assert result == SyncRequest.Status.WAITING
@@ -536,13 +546,19 @@ def test_consumption_alert_suggests_only_a_sefaz_cursor_mismatch(
     control.refresh_from_db()
     assert control.last_nsu == (returned_nsu if auto_corrected else "000000000090200")
     assert control.next_allowed_at > now
-    if auto_corrected:
+    if retry_after_wait:
         from unittest.mock import patch
 
         from apps.fiscal.services.sync import _release_waiting_synchronizations
 
         with patch("apps.fiscal.services.sync._dispatch_sync_request"):
             assert _release_waiting_synchronizations(now=now) == 0
+            assert (
+                _release_waiting_synchronizations(
+                    now=control.next_allowed_at - timedelta(seconds=1)
+                )
+                == 0
+            )
             assert (
                 _release_waiting_synchronizations(
                     now=control.next_allowed_at + timedelta(seconds=1)

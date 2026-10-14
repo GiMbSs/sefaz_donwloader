@@ -354,6 +354,13 @@ a necessidade de coordenar outros coletores do mesmo CNPJ. Rejeições por
 frequência, cursor igual ou ausência de cursor válido não geram correção.
 A migration `fiscal.0008_syncpolicy_auto_correct_nsu` adiciona essa opção.
 
+Consultas **agendadas** que recebam rejeição 656 por sequência NSU ficam em
+espera para nova tentativa após uma hora da resposta, independentemente da
+recorrência diária, semanal ou mensal. A liberação ocorre no primeiro ciclo do
+scheduler após a janela fiscal. Com a correção automática habilitada, a tentativa
+usa o cursor corrigido; sem ela, preserva o cursor e o alerta para intervenção
+administrativa. Nesse caso, novas rejeições podem ocorrer até o alinhamento.
+
 A migration `fiscal.0007_document_environment` mantém os caminhos e IDs
 históricos. Documentos vinculados a um único ambiente são classificados; os
 sem evidência ou com vínculos mistos permanecem como legados. Novas gravações

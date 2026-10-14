@@ -416,18 +416,28 @@ def _finish_succeeded(
             auto_corrected = bool(
                 mismatch and policy and policy.is_active and policy.auto_correct_nsu
             )
+            retry_after_wait = auto_corrected or (
+                sync_request.trigger == SyncRequest.Trigger.SCHEDULED
+                and "ultnsu" in batch.reason.casefold()
+            )
             if auto_corrected:
                 control.last_nsu = returned_nsu.zfill(15)
                 control.save(update_fields=("last_nsu", "updated_at"))
+            if retry_after_wait:
                 sync_request.status = SyncRequest.Status.WAITING
                 sync_request.finished_at = None
                 sync_request.result_detail = (
                     "NSU alinhado automaticamente ao retorno da SEFAZ. "
                     "Consulta aguardando a janela fiscal para retomada."
+                    if auto_corrected
+                    else "Consulta agendada rejeitada por sequência NSU. "
+                    "Nova tentativa após a janela fiscal, com o cursor atual "
+                    "ou corrigido por um administrador."
                 )
                 sync_request.save(
                     update_fields=("status", "finished_at", "result_detail")
                 )
+            if auto_corrected:
                 AuditLog.objects.create(
                     actor=None,
                     action="fiscal.nsu_cursor_auto_corrected",
@@ -471,6 +481,13 @@ def _finish_succeeded(
                     "não informa um cursor diferente válido para sugerir correção. "
                     "Confira o último NSU com os demais aplicativos deste CNPJ."
                 )
+            if retry_after_wait and not auto_corrected:
+                message += (
+                    " O agendador tentará novamente após a espera obrigatória "
+                    "de uma hora, sem alterar o cursor automaticamente. "
+                    "Se a divergência não for corrigida, a SEFAZ poderá rejeitar "
+                    "a nova tentativa."
+                )
             open_operation_alert(
                 company_id=sync_request.company_id,
                 code="sefaz_consumption_block",
@@ -486,6 +503,12 @@ def _finish_succeeded(
                     "returned_max_nsu": batch.returned_max_nsu,
                     "nsu_correction_suggested": mismatch,
                     "nsu_auto_corrected": auto_corrected,
+                    "retry_after_wait": retry_after_wait,
+                    "retry_not_before": (
+                        control.next_allowed_at.isoformat()
+                        if retry_after_wait and control.next_allowed_at
+                        else ""
+                    ),
                 },
             )
         AuditLog.objects.create(
