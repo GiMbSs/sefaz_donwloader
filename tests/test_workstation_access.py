@@ -20,6 +20,48 @@ def _office(name: str, tax_identifier: str) -> AccountingOffice:
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "role", [OfficeMembership.Role.ADMIN, OfficeMembership.Role.OPERATOR]
+)
+def test_only_office_admin_can_enable_automatic_nsu_correction(client, role):
+    user = User.objects.create_user(email="nsu@example.test", password="senha-segura")
+    office = _office("Contabilidade", "00000000000191")
+    company = ClientCompany.objects.create(
+        office=office, legal_name="Cliente", tax_identifier="00000000000191"
+    )
+    OfficeMembership.objects.create(office=office, user=user, role=role)
+    policy = SyncPolicy.objects.create(company=company, mode=SyncPolicy.Mode.MANUAL)
+    assert policy.auto_correct_nsu is False
+    client.force_login(user)
+    response = client.post(
+        reverse("company-policy", args=[company.pk]),
+        {
+            "mode": "manual",
+            "frequency": "daily",
+            "timezone": "America/Fortaleza",
+            "monthday": "1",
+            "is_active": "on",
+            "auto_correct_nsu": "on",
+        },
+    )
+    policy.refresh_from_db()
+    if role == OfficeMembership.Role.ADMIN:
+        assert response.status_code == 302
+        assert policy.auto_correct_nsu is True
+        assert (
+            AuditLog.objects.get(action="fiscal.sync_policy_updated").payload[
+                "auto_correct_nsu"
+            ]
+            is True
+        )
+        page = client.get(reverse("company-policy", args=[company.pk]))
+        assert b"auto_correct_nsu" in page.content
+    else:
+        assert response.status_code == 404
+        assert policy.auto_correct_nsu is False
+
+
+@pytest.mark.django_db
 def test_operator_can_only_open_companies_from_their_office(client):
     user = User.objects.create_user(
         email="operador@example.test",

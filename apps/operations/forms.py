@@ -199,10 +199,20 @@ class SyncPolicyForm(forms.ModelForm):
             "weekdays",
             "monthday",
             "is_active",
+            "auto_correct_nsu",
         )
         widgets = {
             "scheduled_time": forms.TimeInput(attrs={"type": "time"}),
             "timezone": forms.TextInput(attrs={"autocomplete": "off"}),
+        }
+        help_texts = {
+            "auto_correct_nsu": (
+                "Autoriza alinhar o cursor ao ultNSU válido retornado pela SEFAZ "
+                "na rejeição 656 por sequência incorreta, com auditoria. "
+                "A consulta será retomada após a espera obrigatória. "
+                "Pode avançar além de documentos ainda não baixados; não recupera "
+                "lacunas. Coordene outros aplicativos que consultam este CNPJ."
+            ),
         }
 
     def __init__(self, *args, **kwargs) -> None:

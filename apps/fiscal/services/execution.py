@@ -79,10 +79,12 @@ def execute_sync_request(
     claimed = _claim_sync_request(sync_request_id=sync_request_id, now=now)
     if isinstance(claimed, str):
         if claimed == SyncRequest.Status.RUNNING:
+            started_at = SyncRequest.objects.get(pk=sync_request_id).started_at
             batch = (
                 DistributionBatch.objects.filter(
                     sync_request_id=sync_request_id,
                     processing_status=DistributionBatch.ProcessingStatus.PROCESSED,
+                    created_at__gte=started_at or now,
                 )
                 .order_by("-processed_at", "-pk")
                 .first()
@@ -93,7 +95,7 @@ def execute_sync_request(
                     batch=batch,
                     now=now,
                 )
-                return SyncRequest.Status.SUCCEEDED
+                return SyncRequest.objects.get(pk=sync_request_id).status
         return claimed
 
     if (
@@ -221,7 +223,7 @@ def execute_sync_request(
         batch=batch,
         now=now,
     )
-    return SyncRequest.Status.SUCCEEDED
+    return SyncRequest.objects.get(pk=claimed.request_id).status
 
 
 def _log_transport_failure(
@@ -397,20 +399,102 @@ def _finish_succeeded(
             failed=False,
         )
         if batch.status_code == "656":
+            control = NsuControl.objects.get(pk=batch.nsu_control_id)
+            returned_nsu = batch.returned_last_nsu
+            mismatch = (
+                "ultnsu" in batch.reason.casefold()
+                and bool(returned_nsu)
+                and returned_nsu.isascii()
+                and returned_nsu.isdecimal()
+                and len(returned_nsu) <= 15
+                and int(returned_nsu) != int(control.last_nsu or "0")
+            )
+            local_last_nsu = control.last_nsu
+            policy = SyncPolicy.objects.filter(
+                company_id=sync_request.company_id
+            ).first()
+            auto_corrected = bool(
+                mismatch and policy and policy.is_active and policy.auto_correct_nsu
+            )
+            if auto_corrected:
+                control.last_nsu = returned_nsu.zfill(15)
+                control.save(update_fields=("last_nsu", "updated_at"))
+                sync_request.status = SyncRequest.Status.WAITING
+                sync_request.finished_at = None
+                sync_request.result_detail = (
+                    "NSU alinhado automaticamente ao retorno da SEFAZ. "
+                    "Consulta aguardando a janela fiscal para retomada."
+                )
+                sync_request.save(
+                    update_fields=("status", "finished_at", "result_detail")
+                )
+                AuditLog.objects.create(
+                    actor=None,
+                    action="fiscal.nsu_cursor_auto_corrected",
+                    target=f"fiscal.nsu_control:{control.pk}",
+                    payload={
+                        "company_id": sync_request.company_id,
+                        "environment": sync_request.environment,
+                        "batch_id": batch.pk,
+                        "request_id": sync_request.pk,
+                        "previous_last_nsu": local_last_nsu,
+                        "new_last_nsu": control.last_nsu,
+                    },
+                )
+            message = (
+                "A SEFAZ respondeu cStat 656. O sistema respeitará a janela "
+                "de espera antes de uma nova consulta."
+            )
+            if auto_corrected:
+                message += (
+                    " Cursor corrigido automaticamente "
+                    f"de {int(local_last_nsu or '0')} "
+                    f"para {int(returned_nsu)}, conforme a política autorizada. "
+                    "A solicitação será retomada pelo agendador após a espera. "
+                    "Revise eventuais documentos faltantes e coordene outros "
+                    "aplicativos deste CNPJ."
+                )
+            elif mismatch:
+                message += (
+                    f" Cursor local: {int(control.last_nsu or '0')}. "
+                    f"Último NSU informado pela SEFAZ: {int(returned_nsu)}. "
+                    "Sugestão: um administrador deve acessar a empresa, selecionar "
+                    "'Corrigir cursor NSU' e informar o valor retornado pela SEFAZ "
+                    f"no ambiente {sync_request.get_environment_display()}. "
+                    "A correção não libera a consulta antes do fim da espera. "
+                    "Coordene outros aplicativos que consultam este CNPJ e revise "
+                    "os documentos faltantes; ajustar o cursor não os recupera."
+                )
+            elif "ultnsu" in batch.reason.casefold():
+                message += (
+                    " A SEFAZ exige continuidade do último NSU, mas este lote "
+                    "não informa um cursor diferente válido para sugerir correção. "
+                    "Confira o último NSU com os demais aplicativos deste CNPJ."
+                )
             open_operation_alert(
                 company_id=sync_request.company_id,
                 code="sefaz_consumption_block",
                 severity="warning",
                 title="Consulta bloqueada temporariamente pela SEFAZ",
-                message=(
-                    "A SEFAZ respondeu cStat 656. O sistema respeitará a janela "
-                    "de espera antes de uma nova consulta."
-                ),
-                context={"status_code": batch.status_code},
+                message=message,
+                context={
+                    "status_code": batch.status_code,
+                    "batch_id": batch.pk,
+                    "environment": sync_request.environment,
+                    "local_last_nsu": local_last_nsu,
+                    "returned_last_nsu": returned_nsu,
+                    "returned_max_nsu": batch.returned_max_nsu,
+                    "nsu_correction_suggested": mismatch,
+                    "nsu_auto_corrected": auto_corrected,
+                },
             )
         AuditLog.objects.create(
             actor=sync_request.requested_by,
-            action="fiscal.sync_request_succeeded",
+            action=(
+                "fiscal.sync_request_waiting"
+                if sync_request.status == SyncRequest.Status.WAITING
+                else "fiscal.sync_request_succeeded"
+            ),
             target=f"fiscal.sync_request:{sync_request.pk}",
             payload={
                 "company_id": sync_request.company_id,

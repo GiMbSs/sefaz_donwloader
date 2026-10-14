@@ -483,6 +483,7 @@ class CompanyPolicyUpdateView(CompanyAccessMixin, View):
                     "mode": policy.mode,
                     "frequency": policy.frequency,
                     "is_active": policy.is_active,
+                    "auto_correct_nsu": policy.auto_correct_nsu,
                 },
             )
         messages.success(request, "Política de sincronização atualizada.")

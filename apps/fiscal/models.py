@@ -35,6 +35,9 @@ class SyncPolicy(models.Model):
     weekdays = models.JSONField("dias da semana", default=list, blank=True)
     monthday = models.PositiveSmallIntegerField("dia do mês", default=1)
     is_active = models.BooleanField("ativa", default=True)
+    auto_correct_nsu = models.BooleanField(
+        "Corrigir automaticamente o NSU divergente", default=False
+    )
     last_requested_at = models.DateTimeField(
         "última solicitação", null=True, blank=True
     )

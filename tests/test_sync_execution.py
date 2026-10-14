@@ -20,7 +20,7 @@ from apps.fiscal.services.sync import (
     enqueue_due_synchronizations,
     request_synchronization,
 )
-from apps.operations.models import OperationAlert
+from apps.operations.models import AuditLog, OperationAlert
 from apps.organizations.models import AccountingOffice, ClientCompany
 
 
@@ -353,9 +353,7 @@ def test_waiting_request_is_only_released_after_the_persisted_hold_expires():
     assert submission.request.status == SyncRequest.Status.WAITING
     assert client.calls == []
     assert (
-        enqueue_due_synchronizations(
-            now=control.next_allowed_at + timedelta(seconds=1)
-        )
+        enqueue_due_synchronizations(now=control.next_allowed_at + timedelta(seconds=1))
         == 1
     )
     submission.request.refresh_from_db()
@@ -459,9 +457,7 @@ def test_sefaz_consumption_block_creates_a_warning_alert(tmp_path):
 
     result = execute_sync_request(
         submission.request.pk,
-        client=_SuccessfulClient(
-            _distribution_response(status_code="656")
-        ),  # type: ignore[arg-type]
+        client=_SuccessfulClient(_distribution_response(status_code="656")),  # type: ignore[arg-type]
         storage=FiscalStorage(root=tmp_path),
         now=now,
     )
@@ -472,6 +468,89 @@ def test_sefaz_consumption_block_creates_a_warning_alert(tmp_path):
         code="sefaz_consumption_block",
         severity=OperationAlert.Severity.WARNING,
     ).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("returned_nsu", "nsu_reason", "suggested", "auto_enabled"),
+    [
+        ("000000000090267", True, True, False),
+        ("000000000090200", True, False, True),
+        ("000000000090267", False, False, True),
+        ("000000000090267", True, True, True),
+        ("000000000090100", True, True, True),
+    ],
+)
+def test_consumption_alert_suggests_only_a_sefaz_cursor_mismatch(
+    tmp_path, returned_nsu, nsu_reason, suggested, auto_enabled
+):
+    now = timezone.now()
+    company = _company()
+    SyncPolicy.objects.filter(company=company).update(auto_correct_nsu=auto_enabled)
+    _certificate(company, now=now)
+    submission = request_synchronization(
+        company_id=company.pk,
+        environment=NsuControl.Environment.PRODUCTION,
+        trigger=SyncRequest.Trigger.MANUAL,
+        dispatch=False,
+        now=now,
+    )
+    control = NsuControl.objects.get(company=company)
+    control.last_nsu = "000000000090200"
+    control.save()
+    payload = _distribution_response(status_code="656")
+    if nsu_reason:
+        payload = payload.replace(
+            b"Sem novos documentos",
+            b"Deve ser utilizado o ultNSU nas solicitacoes subsequentes",
+        )
+    original = b"<ultNSU>000000000000000</ultNSU>"
+    payload = payload.replace(
+        original,
+        f"<ultNSU>{returned_nsu}</ultNSU>".encode() if returned_nsu else b"",
+    )
+    result = execute_sync_request(
+        submission.request.pk,
+        client=_SuccessfulClient(payload),
+        storage=FiscalStorage(root=tmp_path),
+        now=now,
+    )
+    alert = OperationAlert.objects.get(company=company, code="sefaz_consumption_block")
+    assert alert.context["nsu_correction_suggested"] is suggested
+    assert alert.context["returned_last_nsu"] == (returned_nsu or "")
+    assert alert.context["environment"] == "production"
+    auto_corrected = auto_enabled and suggested
+    if auto_corrected:
+        assert "corrigido automaticamente" in alert.message
+        assert result == SyncRequest.Status.WAITING
+        assert alert.context["nsu_auto_corrected"] is True
+        assert AuditLog.objects.filter(
+            action="fiscal.nsu_cursor_auto_corrected"
+        ).exists()
+    elif suggested:
+        assert "90200" in alert.message and "90267" in alert.message
+        assert "Corrigir cursor NSU" in alert.message
+        assert "não libera" in alert.message
+    else:
+        assert "Sugestão:" not in alert.message
+    control.refresh_from_db()
+    assert control.last_nsu == (returned_nsu if auto_corrected else "000000000090200")
+    assert control.next_allowed_at > now
+    if auto_corrected:
+        from unittest.mock import patch
+
+        from apps.fiscal.services.sync import _release_waiting_synchronizations
+
+        with patch("apps.fiscal.services.sync._dispatch_sync_request"):
+            assert _release_waiting_synchronizations(now=now) == 0
+            assert (
+                _release_waiting_synchronizations(
+                    now=control.next_allowed_at + timedelta(seconds=1)
+                )
+                == 1
+            )
+        submission.request.refresh_from_db()
+        assert submission.request.status == SyncRequest.Status.QUEUED
 
 
 @pytest.mark.django_db

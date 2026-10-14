@@ -343,6 +343,17 @@ usuários, grupos e vínculos são administrados somente por superusuários.
 
 ### Atualização com separação de documentos por ambiente
 
+Administradores podem habilitar **Corrigir automaticamente o NSU divergente**
+em **Configurar política** de cada empresa. A opção começa desativada. Quando
+uma rejeição 656 por sequência incorreta trouxer um `ultNSU` válido diferente
+do cursor local, o worker alinha o cursor, registra os valores anterior e novo,
+ambiente e lote na auditoria e mantém a solicitação em espera. O scheduler
+retoma a consulta somente após a janela obrigatória da SEFAZ; precisa estar
+em execução. A opção não recupera documentos que ficaram para trás nem elimina
+a necessidade de coordenar outros coletores do mesmo CNPJ. Rejeições por
+frequência, cursor igual ou ausência de cursor válido não geram correção.
+A migration `fiscal.0008_syncpolicy_auto_correct_nsu` adiciona essa opção.
+
 A migration `fiscal.0007_document_environment` mantém os caminhos e IDs
 históricos. Documentos vinculados a um único ambiente são classificados; os
 sem evidência ou com vínculos mistos permanecem como legados. Novas gravações
