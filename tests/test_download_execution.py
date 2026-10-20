@@ -156,7 +156,7 @@ def test_timeout_after_accepted_post_never_resubmits(
     now = timezone.now()
     advance_part(part.pk, client_factory=portal.open, now=now, dispatch=False)
     part.refresh_from_db()
-    assert part.status == "ambiguous"
+    assert part.status == "waiting"
     assert RemoteSubmissionBarrier.objects.filter(part=part).count() == 2
     advance_part(
         part.pk,

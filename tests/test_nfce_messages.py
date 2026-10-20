@@ -1,6 +1,7 @@
 from datetime import date
 from uuid import uuid4
 
+import pytest
 from django.utils import timezone
 
 from apps.fiscal.atf.types import (
@@ -52,7 +53,7 @@ def test_nfce_correlation_never_selects_nfe_group_for_the_same_period():
     assert result.candidates == ("2",)
 
 
-def test_nfce_group_with_pending_child_is_not_finished_early():
+def test_nfce_ready_attachment_is_not_blocked_by_pending_child():
     from apps.fiscal.atf.correlation import reconcile_result
 
     period = Period(date(2024, 10, 10), date(2024, 10, 10))
@@ -73,7 +74,7 @@ def test_nfce_group_with_pending_child_is_not_finished_early():
         ),
     )
     result = reconcile_result(evidence, messages, period=period, document_model="65")
-    assert result.outcome == "pending"
+    assert result.outcome == "matched"
 
 
 def test_initial_notification_does_not_block_completed_nfce_result():
@@ -124,7 +125,7 @@ def test_ready_result_and_another_pending_candidate_are_ambiguous():
     )
 
 
-def test_pending_result_with_generic_footer_blocks_until_its_attachment_arrives():
+def test_ready_attachment_is_not_blocked_by_generic_footer_in_same_group():
     from apps.fiscal.atf.correlation import reconcile_result
     from apps.fiscal.atf.messages import parse_message
 
@@ -146,4 +147,48 @@ def test_pending_result_with_generic_footer_blocks_until_its_attachment_arrives(
     result = reconcile_result(
         evidence, (ready, pending), period=period, document_model="65"
     )
-    assert result.outcome == "pending"
+    assert result.outcome == "matched"
+
+
+@pytest.mark.parametrize(
+    "document_model,sender", [("55", "FIS_1322"), ("65", "FIS_1484")]
+)
+def test_parsed_notifications_allow_ready_group_attachment(document_model, sender):
+    from apps.fiscal.atf.correlation import reconcile_result
+    from apps.fiscal.atf.messages import parse_message
+
+    period = Period(date(2024, 10, 10), date(2024, 10, 10))
+    evidence = SubmissionEvidence(uuid4(), uuid4(), (), timezone.now())
+    bodies = (
+        "Solicitação recebida. Será processada. Aguarde.",
+        "Período solicitado: 10/10/2024 a 10/10/2024 Em processamento.",
+        "Período solicitado: 10/10/2024 a 10/10/2024 "
+        "Tarefa executada com sucesso. "
+        '<a href="javascript:mostrarArquivo(0)">ZIP</a>'
+        '<a href="javascript:mostrarArquivo(1)">ZIP</a>',
+    )
+    messages = tuple(
+        parse_message(f"<body>{sender} {body}</body>".encode(), str(21 + i), "20")
+        for i, body in enumerate(bodies)
+    )
+    pending = reconcile_result(
+        evidence, messages[:2], period=period, document_model=document_model
+    )
+    assert pending.outcome == "pending"
+    result = reconcile_result(
+        evidence, messages, period=period, document_model=document_model
+    )
+    assert result.outcome == "matched"
+    assert result.candidates == ("20",)
+    assert [item.index for item in messages[-1].attachments] == [0, 1]
+
+    other_pending = parse_message(
+        f"<body>{sender} {bodies[1]}</body>".encode(), "31", "30"
+    )
+    ambiguous = reconcile_result(
+        evidence,
+        (*messages, other_pending),
+        period=period,
+        document_model=document_model,
+    )
+    assert ambiguous.outcome == "ambiguous"

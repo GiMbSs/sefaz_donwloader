@@ -28,6 +28,7 @@ def test_uncertain_post_shows_automatic_wait_without_empty_manual_review(
     assert "Aguardando confirmação do envio" in content
     assert "Próxima verificação prevista" in content
     assert "Conferir resultado" not in content
+    assert 'class="notice notice-error"' not in content
 
 
 def test_beat_recovery_logs_manual_parts_even_without_new_scheduled_requests(

@@ -35,7 +35,7 @@ def download_error(value: Any) -> Any:
 @register.filter
 def download_part_status(part: Any) -> Any:
     if (
-        part.status == "ambiguous"
+        part.status in {"waiting", "ambiguous"}
         and part.error_code == "atf_submission_uncertain"
         and not part.candidates
     ):

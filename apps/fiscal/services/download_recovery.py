@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -88,15 +89,37 @@ def recover_download_request(
             part.deadline_at = now + timedelta(
                 seconds=result_wait_seconds(request.document_model)
             )
+            last_submit = (
+                part.attempts.filter(operation="submit").order_by("-started_at").first()
+            )
+            submitted = max(
+                (
+                    timestamp
+                    for timestamp in (
+                        part.submitted_at,
+                        last_submit.finished_at if last_submit else None,
+                        now
+                        if part.submitted_at is None and last_submit is None
+                        else None,
+                    )
+                    if timestamp is not None
+                ),
+                default=now,
+            )
+            part.next_poll_at = max(
+                now,
+                submitted
+                + timedelta(seconds=max(60, settings.ATF_POLL_INTERVAL_SECONDS)),
+            )
         else:
             part.status = "queued"
-        part.next_poll_at = now
+            part.next_poll_at = now
         part.retry_count = 0
         part.error_code = ""
         part.save()
         resumed.append(part.pk)
         if dispatch:
-            transaction.on_commit(partial(enqueue_part, part.pk))
+            transaction.on_commit(partial(enqueue_part, part.pk, part.next_poll_at))
     AuditLog.objects.create(
         actor=user,
         action="fiscal.download_recovered",

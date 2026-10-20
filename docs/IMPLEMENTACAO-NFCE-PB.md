@@ -14,7 +14,7 @@ Pedidos manuais exigem modelo, data inicial e final. Políticas automáticas per
 - `ATF_NFCE_WAIT_TIMEOUT_SECONDS` define a janela de geração: padrão 604800 segundos (sete dias).
 - `ATF_POLL_INTERVAL_SECONDS` define o intervalo inicial: padrão 60 segundos. O intervalo cresce a cada três consultas saudáveis até `ATF_NFCE_MAX_POLL_INTERVAL_SECONDS`, padrão 900 segundos.
 - Prazo, candidatos, etapas e contador de consultas ficam no banco. Reinícios não perdem a espera. Nenhum POST aceito ou de resultado incerto é reenviado automaticamente.
-- O código percorre os filhos e anexos, sem assumir duas mensagens. Um resultado pendente com o período solicitado impede a conclusão prematura, mesmo que outro filho já tenha anexo. Uma notificação inicial sem período não impede um resultado pronto.
+- O código percorre os filhos e anexos, sem assumir duas mensagens. Um anexo pronto no grupo identificado é baixado sem aguardar que notificações antigas de processamento mudem. Sem anexo disponível, a espera continua; candidatos em grupos diferentes exigem conferência.
 - Após esgotar tentativas, pedidos agendados mantêm o reagendamento persistente existente; pedidos manuais permitem retomada explícita. Esperar geração saudável não consome o orçamento de falhas de conexão.
 
 Os limites configuráveis de ZIP continuam ativos. A barreira de conta pode serializar outras partes enquanto uma consulta aguarda geração; é uma proteção conservadora contra associação incorreta de resultados.
@@ -33,4 +33,4 @@ O download real de um lote NFC-e ainda precisa de validação operacional. Não 
 
 Verificação final em banco descartável: 148 testes passaram no SQLite (um teste de locks ignorado) e 149 no PostgreSQL. Ruff, formatação, mypy (83 arquivos), Django check, ausência de drift nas migrações e git diff --check passaram. A atualização 0013→0015 preserva a política ativa, o modelo NF-e e a chave do pedido existente.
 
-A revisão independente identificou o caso de conclusão prematura com um filho ainda pendente; a correção foi reproduzida e verificada com teste de regressão. A revisão completa ficou pendente porque o revisor atingiu o limite de uso.
+A revisão inicial adotou o bloqueio por um filho pendente. A revisão posterior de espera corrigiu essa regra: notificações de processamento permanecem na caixa após a geração do ZIP e não devem bloquear um anexo pronto no mesmo grupo. A regra atual tem regressões com mensagens processadas pelo parser dos dois modelos; veja [espera e retomada](ESPERA-RETOMADA-ATF-PB.md).

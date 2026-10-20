@@ -215,7 +215,7 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULE = {
     "queue-due-atf-downloads": {
         "task": "apps.fiscal.tasks.schedule_due_downloads",
-        "schedule": 300.0,
+        "schedule": 60.0,
     },
     "expire-staged-certificate-uploads": {
         "task": "apps.certificates.tasks.expire_staged_certificate_uploads_task",

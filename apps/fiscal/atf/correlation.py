@@ -39,9 +39,12 @@ def reconcile_result(
         return CorrelationResult("ambiguous", candidates, period)
     if not candidates:
         return CorrelationResult("pending")
-    if candidates[0] in processing_groups:
-        return CorrelationResult("pending", candidates, period)
     outcomes = groups[candidates[0]]
+    # Earlier notifications remain in the mailbox after a ZIP becomes ready.
+    # A visible attachment in this group can be delivered without waiting for
+    # those historical messages to change.
+    if candidates[0] in processing_groups and "success" not in outcomes:
+        return CorrelationResult("pending", candidates, period)
     if len(outcomes) > 1:
         outcomes.discard("pending")
     if len(outcomes) > 1:

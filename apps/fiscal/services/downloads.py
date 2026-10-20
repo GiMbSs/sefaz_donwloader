@@ -137,6 +137,22 @@ def enqueue_part(part_id: Any, eta: Any = None) -> bool:
         return False
 
 
+def _defer_delivery(
+    part: Any, eta: datetime, *, dispatch: bool, reason: str
+) -> AdvanceResult:
+    """An early/busy delivery must not consume the only queued wake-up."""
+    if dispatch:
+        enqueue_part(part.pk, eta)
+    logger.info(
+        "event=atf_delivery_deferred request_id=%s part_id=%s reason=%s eta=%s",
+        part.request_id,
+        part.pk,
+        reason,
+        eta,
+    )
+    return AdvanceResult(part.status, eta)
+
+
 @transaction.atomic
 def request_download(
     *,
@@ -305,6 +321,13 @@ def _schedule(
     part.next_poll_at = eta
     part.save(update_fields=["status", "next_poll_at", "error_code"])
     consolidate_request(part.request_id)
+    logger.info(
+        "event=atf_part_waiting request_id=%s part_id=%s status=%s next_poll_at=%s",
+        part.request_id,
+        part.pk,
+        part.status,
+        eta,
+    )
     if dispatch:
         transaction.on_commit(lambda: enqueue_part(part.pk, eta))
     return AdvanceResult(part.status, eta)
@@ -410,13 +433,19 @@ def advance_part(
     if part.status in TERMINAL_PARTS or part.request.status == "cancelled":
         return AdvanceResult(part.status)
     if part.next_poll_at and part.next_poll_at > now:
-        return AdvanceResult(part.status, part.next_poll_at)
+        return _defer_delivery(
+            part, part.next_poll_at, dispatch=dispatch, reason="not_due"
+        )
     company_token = claim_access(
         company_scope(part.request.company.tax_identifier), part.pk, now=now
     )
     if company_token is None:
         part.refresh_from_db()
-        return AdvanceResult(part.status, part.next_poll_at)
+        eta = max(
+            part.next_poll_at or now,
+            now + timedelta(seconds=max(60, settings.ATF_POLL_INTERVAL_SECONDS)),
+        )
+        return _defer_delivery(part, eta, dispatch=dispatch, reason="company_busy")
     sender_code = document_profile(part.request.document_model).sender_code
     account_token = None
     attempt = DownloadAttempt.objects.create(part=part, operation="connect")
@@ -473,13 +502,15 @@ def advance_part(
                 "account:" + account, part.pk, now=current_time()
             )
             if account_token is None:
-                return _schedule(part, now, dispatch, token=company_token)
+                return _schedule(part, current_time(), dispatch, token=company_token)
             part.remote_account_key = account
             part.save(update_fields=["remote_account_key"])
             client.heartbeat = heartbeat
             retry_at = reserve_mailbox_poll(account_token, now=current_time())
             if retry_at:
-                return _schedule(part, now, dispatch, eta=retry_at, token=company_token)
+                return _schedule(
+                    part, current_time(), dispatch, eta=retry_at, token=company_token
+                )
             if part.status == "queued":
                 scopes = [company_token.scope, account_token.scope]
                 if (
@@ -487,7 +518,9 @@ def advance_part(
                     .exclude(part=part)
                     .exists()
                 ):
-                    return _schedule(part, now, dispatch, token=company_token)
+                    return _schedule(
+                        part, current_time(), dispatch, token=company_token
+                    )
                 issuer = client.lookup_issuer(
                     part.request.company.tax_identifier,
                     document_model=part.request.document_model,
@@ -499,7 +532,9 @@ def advance_part(
                 )
                 attempt.operation = "submit"
                 attempt.save(update_fields=["operation"])
-                evidence = SubmissionEvidence(part.pk, attempt.pk, baseline, now)
+                evidence = SubmissionEvidence(
+                    part.pk, attempt.pk, baseline, current_time()
+                )
                 begin_submission(part.pk, account_token, evidence, now=current_time())
                 part.refresh_from_db()
                 try:
@@ -522,7 +557,11 @@ def advance_part(
                     attempt.finished_at = current_time()
                     attempt.save()
                 return _schedule(
-                    part, now, dispatch, status="waiting", token=company_token
+                    part,
+                    current_time(),
+                    dispatch,
+                    status="waiting",
+                    token=company_token,
                 )
             attempt.operation = "poll"
             attempt.save(update_fields=["operation"])
@@ -565,8 +604,20 @@ def advance_part(
                 period=Period(part.start_date, part.end_date),
                 document_model=part.request.document_model,
             )
+            # A healthy mailbox check is normal waiting. Keep prior failure
+            # diagnostics in attempts rather than showing a stale current error.
+            part.error_code = ""
+            logger.info(
+                "event=atf_poll_result request_id=%s part_id=%s outcome=%s "
+                "candidates=%s attachments=%s",
+                part.request_id,
+                part.pk,
+                result.outcome,
+                len(result.candidates),
+                sum(len(message.attachments) for message in messages),
+            )
             part.candidates = list(result.candidates)
-            part.save(update_fields=["candidates"])
+            part.save(update_fields=["candidates", "error_code"])
             if result.outcome == "matched":
                 bind_remote_result(
                     part.pk, account, result.candidates[0], actor_id=None
@@ -607,9 +658,14 @@ def advance_part(
             part.poll_count += 1
             part.save(update_fields=["poll_count"])
             if result_status == "ambiguous":
+                part.error_code = "atf_result_ambiguous"
                 _alert(part, "atf_result_ambiguous")
             return _schedule(
-                part, now, dispatch, status=result_status, token=company_token
+                part,
+                current_time(),
+                dispatch,
+                status=result_status,
+                token=company_token,
             )
     except AtfPermissionError as error:
         if error.args == ("atf_lease_lost",):
@@ -625,12 +681,19 @@ def advance_part(
             with transaction.atomic():
                 assert_access(account_token, now=current_time())
         part.refresh_from_db()
+        if isinstance(error, AtfSubmissionUncertain):
+            part.error_code = "atf_submission_uncertain"
+            logger.info(
+                "event=atf_submission_pending request_id=%s part_id=%s attempt_id=%s",
+                part.request_id,
+                part.pk,
+                attempt.pk,
+            )
+            return _schedule(
+                part, current_time(), dispatch, status="waiting", token=company_token
+            )
         _record_failure(part, attempt, error, elapsed_start)
         _alert(part, part.error_code)
-        if isinstance(error, AtfSubmissionUncertain):
-            return _schedule(
-                part, now, dispatch, status="ambiguous", token=company_token
-            )
         if isinstance(error, (AtfTransientError, AtfSessionExpired)):
             retry_after = min(max(0, getattr(error, "retry_after_seconds", 0)), 604800)
             if part.retry_count < 3:

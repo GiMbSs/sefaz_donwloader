@@ -36,7 +36,7 @@ A tela de falha foi inspecionada no Chromium em 1440 px e 390 px, com os detalhe
 
 ## Retomada e validação do TXT
 
-Os logs posteriores confirmaram execução da etapa às 11:36 e recuperação pelo Beat às 11:39. O Beat consulta os agendamentos e recupera etapas vencidas a cada cinco minutos; `beat: Starting...` é uma confirmação de inicialização. O acompanhamento de uma parte também pode ser entregue diretamente ao worker por ETA, sem uma mensagem correspondente no log do Beat.
+Os logs posteriores confirmaram execução da etapa às 11:36 e recuperação pelo Beat às 11:39. Na versão desse teste, o Beat recuperava etapas vencidas a cada cinco minutos. A [correção de espera e retomada](ESPERA-RETOMADA-ATF-PB.md) reduziu esse intervalo para um minuto. `beat: Starting...` confirma a inicialização; o acompanhamento de uma parte também pode ser entregue diretamente ao worker por ETA, sem uma mensagem correspondente no log do Beat.
 
 O retorno numérico de `schedule_due_downloads` conta pedidos novos das políticas. Ele pode ser zero mesmo quando o worker recebeu partes de pedidos manuais recuperados. Agora `event=atf_scheduler_tick` informa separadamente `created_requests` e `recovered_parts`. Esta última contagem exige publicação aceita pelo broker. `event=atf_part_dispatched` informa parte, tarefa Celery e ETA; falhas de publicação geram `event=atf_dispatch_failed` e alerta de fila.
 
