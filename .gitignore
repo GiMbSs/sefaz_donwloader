@@ -12,4 +12,7 @@ htmlcov/
 .coverage
 *.sqlite3
 *.log
+.worktrees/
+.impeccable/
+certs/
 
