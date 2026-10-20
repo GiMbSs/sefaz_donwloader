@@ -162,7 +162,9 @@ class CertificateVault:
         if company is not None:
             return self.root / company_storage_directory(company) / "certificado"
         if company_id is None:
-            raise CertificateVaultError("A company is required for certificate storage.")
+            raise CertificateVaultError(
+                "A company is required for certificate storage."
+            )
         return self.root / "clientes" / str(company_id) / "certificados"
 
     def _path_for(
@@ -322,7 +324,17 @@ class CertificateVault:
             ) from error
 
     def _resolve_path(self, relative_path: str) -> Path:
-        target = (self.root / Path(relative_path)).resolve()
+        from pathlib import PureWindowsPath
+
+        normalized = relative_path.replace("\\", "/")
+        if (
+            not normalized
+            or Path(normalized).is_absolute()
+            or PureWindowsPath(relative_path).drive
+            or ".." in Path(normalized).parts
+        ):
+            raise CertificateVaultError("Certificate path escaped the private vault.")
+        target = (self.root / normalized).resolve()
         if self.root.resolve() not in target.parents:
             raise CertificateVaultError("Certificate path escaped the private vault.")
         return target
@@ -359,6 +371,8 @@ def _certificate_datetime(certificate: x509.Certificate, attribute: str) -> date
     value = getattr(certificate, utc_attribute, None)
     if value is None:
         value = getattr(certificate, attribute).replace(tzinfo=UTC)
+    if not isinstance(value, datetime):
+        raise CertificateValidationError("Invalid certificate validity timestamp")
     return value.astimezone(UTC)
 
 

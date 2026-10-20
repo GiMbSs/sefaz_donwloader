@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.contrib import admin
 
 from apps.organizations.admin_access import ReadOnlyOfficeAdmin
@@ -33,10 +35,10 @@ class DigitalCertificateAdmin(ReadOnlyOfficeAdmin):
     )
     exclude = ("password_hash", "encrypted_password_path")
 
-    def has_add_permission(self, request):  # type: ignore[no-untyped-def]
+    def has_add_permission(self, request: Any) -> Any:
         return False
 
-    def has_change_permission(self, request, obj=None):  # type: ignore[no-untyped-def]
+    def has_change_permission(self, request: Any, obj: Any = None) -> Any:
         return False
 
 
@@ -61,8 +63,8 @@ class CertificateUploadAdmin(ReadOnlyOfficeAdmin):
     )
     exclude = ("encrypted_payload", "encrypted_password")
 
-    def has_add_permission(self, request):  # type: ignore[no-untyped-def]
+    def has_add_permission(self, request: Any) -> Any:
         return False
 
-    def has_change_permission(self, request, obj=None):  # type: ignore[no-untyped-def]
+    def has_change_permission(self, request: Any, obj: Any = None) -> Any:
         return False

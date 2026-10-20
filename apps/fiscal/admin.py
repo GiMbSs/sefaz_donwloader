@@ -1,150 +1,64 @@
+from typing import Any
+
 from django.contrib import admin
 
-from apps.organizations.admin_access import ReadOnlyOfficeAdmin
+from apps.organizations.admin_access import InstallationAdminMixin, ReadOnlyOfficeAdmin
 
 from .models import (
-    DistributionBatch,
-    DistributionItem,
-    FiscalDocument,
-    NsuControl,
-    SyncPolicy,
-    SyncRequest,
+    ArchiveMember,
+    AtfAccessLease,
+    DownloadArchive,
+    DownloadAttempt,
+    DownloadPart,
+    DownloadPolicy,
+    DownloadRequest,
+    FiscalEvent,
+    InvoiceDocument,
+    InvoiceXmlVersion,
+    RemoteResultBinding,
+    RemoteSubmissionBarrier,
 )
 
 
-@admin.register(SyncPolicy)
-class SyncPolicyAdmin(ReadOnlyOfficeAdmin):
-    list_display = (
-        "company",
-        "mode",
-        "frequency",
-        "scheduled_time",
-        "is_active",
-        "last_finished_at",
-    )
-    list_filter = ("mode", "frequency", "is_active")
-    search_fields = ("company__legal_name", "company__tax_identifier")
-    list_select_related = ("company",)
+class AtfReadOnlyAdmin(ReadOnlyOfficeAdmin):
+    def get_readonly_fields(self, request: Any, obj: Any = None) -> Any:
+        return tuple(field.name for field in self.model._meta.fields)
 
 
-@admin.register(NsuControl)
-class NsuControlAdmin(ReadOnlyOfficeAdmin):
-    list_display = (
-        "company",
-        "environment",
-        "last_nsu",
-        "maximum_nsu",
-        "next_allowed_at",
-    )
-    list_filter = ("environment", "service")
-    search_fields = ("company__legal_name", "company__tax_identifier")
-    list_select_related = ("company",)
-    readonly_fields = (
-        "last_nsu",
-        "maximum_nsu",
-        "next_allowed_at",
-        "last_status_code",
-        "updated_at",
+for _model, _lookup in (
+    (DownloadPolicy, "company__office"),
+    (DownloadRequest, "company__office"),
+    (DownloadPart, "request__company__office"),
+    (DownloadAttempt, "part__request__company__office"),
+    (DownloadArchive, "part__request__company__office"),
+    (ArchiveMember, "archive__part__request__company__office"),
+    (InvoiceDocument, "company__office"),
+    (InvoiceXmlVersion, "document__company__office"),
+    (FiscalEvent, "company__office"),
+    (RemoteResultBinding, "part__request__company__office"),
+):
+    admin.site.register(
+        _model,
+        type(
+            f"{_model.__name__}Admin", (AtfReadOnlyAdmin,), {"office_lookup": _lookup}
+        ),
     )
 
 
-@admin.register(SyncRequest)
-class SyncRequestAdmin(ReadOnlyOfficeAdmin):
-    list_display = ("company", "environment", "trigger", "status", "requested_at")
-    list_filter = ("environment", "trigger", "status")
-    search_fields = ("company__legal_name", "company__tax_identifier")
-    list_select_related = ("company", "requested_by")
-    readonly_fields = ("requested_at", "started_at", "finished_at")
+class AtfInstallationAdmin(InstallationAdminMixin, AtfReadOnlyAdmin):
+    def get_queryset(self, request: Any) -> Any:
+        queryset = admin.ModelAdmin.get_queryset(self, request)
+        return queryset if request.user.is_superuser else queryset.none()
 
-
-class DistributionItemInline(admin.TabularInline):
-    model = DistributionItem
-    extra = 0
-    readonly_fields = (
-        "nsu",
-        "schema_name",
-        "compressed_sha256",
-        "xml_sha256",
-        "fiscal_document",
-        "processing_status",
-        "processing_error",
-        "created_at",
-    )
-    can_delete = False
-
-
-@admin.register(DistributionBatch)
-class DistributionBatchAdmin(ReadOnlyOfficeAdmin):
-    list_display = (
-        "company",
-        "status_code",
-        "document_count",
-        "processing_status",
-        "created_at",
-    )
-    list_filter = ("status_code", "processing_status")
-    search_fields = (
-        "company__legal_name",
-        "company__tax_identifier",
-        "response_sha256",
-    )
-    list_select_related = ("company", "nsu_control", "sync_request")
-    readonly_fields = (
-        "company",
-        "nsu_control",
-        "sync_request",
-        "response_sha256",
-        "raw_response_path",
-        "status_code",
-        "reason",
-        "response_at",
-        "returned_last_nsu",
-        "returned_max_nsu",
-        "document_count",
-        "processing_status",
-        "processing_error",
-        "created_at",
-        "processed_at",
-    )
-    inlines = (DistributionItemInline,)
-
-    def has_add_permission(self, request):  # type: ignore[no-untyped-def]
+    def has_add_permission(self, request: Any) -> Any:
         return False
 
-    def has_change_permission(self, request, obj=None):  # type: ignore[no-untyped-def]
+    def has_change_permission(self, request: Any, obj: Any = None) -> Any:
+        return False
+
+    def has_delete_permission(self, request: Any, obj: Any = None) -> Any:
         return False
 
 
-@admin.register(FiscalDocument)
-class FiscalDocumentAdmin(ReadOnlyOfficeAdmin):
-    list_display = (
-        "company",
-        "environment",
-        "access_key",
-        "model",
-        "kind",
-        "validation_status",
-    )
-    list_filter = ("environment", "model", "kind", "validation_status")
-    search_fields = ("company__legal_name", "company__tax_identifier", "access_key")
-    list_select_related = ("company",)
-    readonly_fields = (
-        "company",
-        "access_key",
-        "model",
-        "kind",
-        "schema_name",
-        "document_root",
-        "xml_sha256",
-        "xml_path",
-        "validation_status",
-        "validation_error",
-        "first_received_at",
-        "last_received_at",
-    )
-
-    def has_add_permission(self, request):  # type: ignore[no-untyped-def]
-        return False
-
-    def has_change_permission(self, request, obj=None):  # type: ignore[no-untyped-def]
-        return False
+for _infrastructure_model in (AtfAccessLease, RemoteSubmissionBarrier):
+    admin.site.register(_infrastructure_model, AtfInstallationAdmin)

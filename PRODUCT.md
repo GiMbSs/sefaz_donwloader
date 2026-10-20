@@ -8,52 +8,45 @@ web
 
 ## Users
 
-Administradores e operadores de escritórios contábeis que acompanham, configuram
-e consultam a distribuição de NF-e e NFC-e de empresas clientes.
+Administradores e operadores de escritórios contábeis que solicitam e acompanham downloads de notas emitidas pelas empresas clientes na SEFAZ-PB.
 
 ## Product Purpose
 
-Executar localmente a recuperação controlada de documentos fiscais eletrônicos
-para a contabilidade, mantendo certificados por empresa, histórico auditável,
-controle de NSU e uma pasta de XMLs disponível no computador do cliente.
+Disponibilizar XML e TXT originais em pastas por CNPJ, formato e data da solicitação, com autenticação A1 individual por empresa, histórico auditável e downloads manuais ou automáticos programáveis.
 
 ## Positioning
 
-Uma estação de trabalho contábil que trata a consulta à SEFAZ como uma operação
-fiscal controlada: o cursor NSU, o certificado, o lote recebido e cada arquivo
-extraído são rastreáveis por empresa e ambiente.
+Uma estação de trabalho contábil para escolher períodos, programar coletas e acompanhar arquivos e falhas. Pedidos, anexos, notas e eventos são rastreáveis por empresa, sem NSU.
 
 ## Operating Context
 
-Uso interno em navegador, em instalação Docker local. O escritório cadastra
-empresas, configura periodicidade, acompanha solicitações e consulta XMLs já
-baixados. A Paraíba é o mercado inicial, com expansão planejada para outras UFs.
+Uso interno em navegador, com instalação Docker local. A SEFAZ-PB pode responder lentamente ou ficar instável; o acompanhamento e a próxima tentativa permanecem visíveis. Pedidos manuais registram o usuário solicitante. Pedidos agendados têm novas tentativas persistidas após esgotar o ciclo curto.
 
 ## Capabilities and Constraints
 
-- Python 3.13, Django 6, PostgreSQL, Redis e Celery em containers Docker.
-- NF-e e NFC-e serão baixadas por empresa, diariamente ou sob solicitação,
-  obedecendo o controle de NSU e os intervalos impostos pela SEFAZ.
-- Certificados A1/PFX e a credencial recuperável ficam cifrados em arquivos
-  privados por empresa; o banco retém somente o hash da senha.
-- XMLs ficam em volume montado fora do container, nunca no media público do Django.
-- A interface principal é uma estação de trabalho, não o Django Admin nem um
-  navegador genérico de arquivos.
+- NF-e modelo 55 e NFC-e modelo 65 como emitente, SEFAZ-PB; XML e TXT chegam em ZIP pela caixa ATF.
+- Datas inicial/final obrigatórias em pedidos manuais e períodos completos nas políticas programáveis.
+- Modo, frequência, horário, fuso, dias e ativação de agendamento configuráveis.
+- Certificados A1/PFX e credenciais recuperáveis cifrados fora do banco e do volume público.
+- Pastas privadas por escritório, empresas/CNPJ/XML|TXT/ano/mês/dia da solicitação.
+- Número da nota extraído do XML e conferido com a chave. Notas e eventos separados.
+- Nenhum POST de resultado incerto é repetido automaticamente; o sistema concilia a caixa antes de novo envio.
+- O histórico do motor nacional anterior não precisa ser preservado. Seus dados e recursos SOAP/NSU foram retirados sem resetar cadastros ou certificados.
 
 ## Evidence on Hand
 
-- PRD: `docs/PRD-IMPLEMENTACAO.md`.
-- Não há identidade visual, logotipo ou material de marca fornecido.
-- Dados fiscais exibidos durante desenvolvimento devem ser claramente demonstrativos.
+- Plano revisado: `docs/superpowers/plans/2026-10-19-atf-pb-migration.md`.
+- Operação: `docs/OPERACAO-ATF-PB.md`.
+- Login e ZIP validados anteriormente: `docs/VALIDACAO-AUTENTICACAO-ATF-PB.md` e `docs/VALIDACAO-DOWNLOAD-ATF-PB.md`.
+- Dados de demonstração devem ser explicitamente sintéticos.
 
 ## Product Principles
 
-- Segurança fiscal antes de conveniência operacional.
-- Uma empresa nunca interfere na operação de outra.
-- Estado, espera e falha precisam ser visíveis e explicáveis à contabilidade.
-- Ações manuais não podem burlar o cursor ou os limites da SEFAZ.
+- Uma empresa nunca acessa arquivos ou certificados de outro escritório.
+- Estado, espera, falha e próxima tentativa são visíveis e compreensíveis.
+- Retomadas preservam a identidade do pedido e não criam submissões remotas duplicadas.
+- Nenhuma emissão, manifestação, cancelamento ou outra mutação fiscal faz parte do produto.
 
 ## Accessibility & Inclusion
 
-Interface em português do Brasil, operável por teclado, com contraste adequado,
-estados e mensagens de erro compreensíveis.
+Interface em português do Brasil, operável por teclado, com contraste adequado e mensagens de erro compreensíveis.

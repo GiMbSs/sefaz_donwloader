@@ -1,5 +1,22 @@
 # Migração para downloads ATF-PB — Implementation Plan
 
+## Revisão autorizada em 20/10/2026 — prevalece sobre o plano original
+
+O usuário autorizou continuar e dispensou a preservação de dados gerados pelo motor anterior. As exigências abaixo substituem qualquer trecho conflitante deste documento e da especificação original.
+
+- Retirar a exportação/restauração e a consulta do histórico legado do escopo e dos gates das migrations. Remover os modelos antigos por migrations novas; não resetar cadastros, usuários, políticas programáveis ou certificados. Arquivos antigos não serão apagados por esta implementação.
+- Verificar o XML no download e extrair `ide/nNF`, validando sua correspondência com a chave de acesso. Exibir o número da nota na consulta por empresa; eventos são distintos de notas. Validação estrutural/identidade não equivale à validação criptográfica da assinatura ou a XSD completo.
+- Armazenar ZIPs e conteúdos em `escritorios/<identificador>/empresas/<CNPJ>/XML|TXT/AAAA/MM/DD/`, com a data original da solicitação no fuso configurado e identificadores adicionais para evitar colisão entre pedidos/partes. O prefixo de escritório mantém isolamento quando o mesmo CNPJ pertence a dois tenants. Preservar TXT e ZIP originais.
+- Tratar lentidão com timeouts configuráveis, renovação de leases e execução em etapas sem bloquear worker com sleeps. Retentar somente erros transitórios, respeitando Retry-After e evitando reenviar POST de resultado incerto.
+- Ao esgotar as tentativas curtas de uma tarefa agendada, persistir nova tentativa para o mesmo período/parte após intervalo maior, sem depender da próxima ocorrência regular. Verificar política/empresa ainda ativas; tarefas manuais não entram nessa repetição automática longa. Manter tentativas auditáveis, sem criar pedidos duplicados. Submissão incerta continua em conciliação, nunca é reenviada automaticamente.
+- Tela específica de cada empresa deve listar todos os pedidos automáticos e manuais, com período, origem, estado, datas, próxima tentativa e usuário solicitante manual. Pedidos manuais exigem data inicial e final.
+
+### Sequência revisada restante
+
+1. Testar e implementar número da nota, estrutura de armazenamento e reagendamento longo; conferir histórico por empresa e inputs de período.
+2. Substituir a tarefa 10 por retirada do subsistema de preservação do legado ainda incompleto. Tarefas 11–12: retirar tabelas e funcionalidades exclusivas SOAP/NSU, adaptar acessos e testes úteis ao domínio ATF.
+3. Concluir configuração, diagnóstico, documentação operacional e testes offline/concorrência/instalação/atualização; revisão final independente. Não executar corte em base real nesta implementação.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task; use superpowers:subagent-driven-development only if the user chooses delegation. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Substituir a distribuição nacional DF-e por downloads de NF-e emitidas na SEFAZ-PB, em ZIP de XML/TXT, mantendo e adaptando o download automático programável e removendo NSU e funcionalidades exclusivas da integração anterior sem perder cadastros, certificados ou histórico.

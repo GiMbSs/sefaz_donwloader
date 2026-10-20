@@ -29,11 +29,14 @@ def test_web_envelope_can_only_be_decrypted_with_worker_private_key(tmp_path):
         purpose="pfx",
     )
 
-    assert worker_envelope.decrypt(
-        encrypted,
-        request_id=request_id,
-        purpose="pfx",
-    ) == b"pfx-content"
+    assert (
+        worker_envelope.decrypt(
+            encrypted,
+            request_id=request_id,
+            purpose="pfx",
+        )
+        == b"pfx-content"
+    )
     with pytest.raises(CertificateUploadEnvelopeError):
         worker_envelope.decrypt(
             encrypted,

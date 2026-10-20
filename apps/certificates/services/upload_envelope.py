@@ -115,9 +115,9 @@ class CertificateUploadEnvelope:
 
     @staticmethod
     def _associated_data(request_id: UUID, purpose: str) -> bytes:
-        return (
-            f"sefaz-downloader:certificate-upload:{request_id}:{purpose}"
-        ).encode("ascii")
+        return (f"sefaz-downloader:certificate-upload:{request_id}:{purpose}").encode(
+            "ascii"
+        )
 
     @staticmethod
     def _derive_key(shared_secret: bytes, *, request_id: UUID, purpose: str) -> bytes:

@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import time, timedelta
+from datetime import timedelta
 from typing import Any
 
 from django.contrib import messages
-from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q, QuerySet
-from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views import View
-from django.views.generic import ListView, TemplateView
+from django.views.generic import TemplateView
 
 from apps.certificates.models import CertificateUpload, DigitalCertificate
 from apps.certificates.services.uploads import (
@@ -22,21 +21,10 @@ from apps.certificates.services.uploads import (
     stage_certificate_upload,
 )
 from apps.fiscal.models import (
-    DistributionBatch,
-    FiscalDocument,
-    NsuControl,
-    SyncPolicy,
-    SyncRequest,
+    DownloadPolicy,
+    DownloadRequest,
 )
-from apps.fiscal.services.distribution import request_distribution_batch_reprocessing
-from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
-from apps.fiscal.services.sync import (
-    NsuCursorCorrectionError,
-    SynchronizationRequestError,
-    configure_initial_nsu,
-    correct_nsu_cursor,
-    request_synchronization,
-)
+from apps.operations.download_forms import DownloadPolicyForm
 from apps.operations.forms import (
     AccountingOfficeForm,
     AlertResolutionForm,
@@ -44,8 +32,6 @@ from apps.operations.forms import (
     ClientCompanyCreateForm,
     ClientCompanyForm,
     CompanyArchiveForm,
-    NsuCursorCorrectionForm,
-    SyncPolicyForm,
 )
 from apps.operations.models import AuditLog, OperationAlert
 from apps.organizations.access import (
@@ -54,6 +40,16 @@ from apps.organizations.access import (
     manageable_offices,
 )
 from apps.organizations.models import AccountingOffice, ClientCompany, OfficeMembership
+
+from .http import (
+    AuthenticatedHttpRequest,
+)
+from .http import (
+    AuthenticatedViewMixin as LoginRequiredMixin,
+)
+from .http import (
+    TypedListView as ListView,
+)
 
 
 def health(request: HttpRequest) -> JsonResponse:
@@ -86,20 +82,20 @@ class DashboardView(LoginRequiredMixin, TemplateView):
                 "has_offices": AccountingOffice.objects.exists(),
                 "company_count": companies.count(),
                 "active_company_count": active_company_ids.count(),
-                "blocked_controls": NsuControl.objects.filter(
+                "waiting_requests": DownloadRequest.objects.filter(
                     company_id__in=active_company_ids,
-                    next_allowed_at__gt=timezone.now(),
+                    status="waiting",
                 ).select_related("company"),
                 "expiring_certificates": DigitalCertificate.objects.filter(
                     company_id__in=active_company_ids,
                     status=DigitalCertificate.Status.ACTIVE,
                     not_valid_after__lte=expiry_limit,
                 ).select_related("company"),
-                "recent_requests": SyncRequest.objects.filter(
+                "recent_requests": DownloadRequest.objects.filter(
                     company_id__in=active_company_ids
                 )
                 .select_related("company", "requested_by")
-                .order_by("-requested_at")[:8],
+                .order_by("-created_at")[:8],
                 "open_alerts": OperationAlert.objects.filter(
                     company_id__in=active_company_ids,
                     status=OperationAlert.Status.OPEN,
@@ -150,17 +146,19 @@ class OfficeCreateView(LoginRequiredMixin, View):
 
     template_name = "operations/office_form.html"
 
-    def _ensure_installation_administrator(self, request: HttpRequest) -> None:
+    def _ensure_installation_administrator(
+        self, request: AuthenticatedHttpRequest
+    ) -> None:
         if not request.user.is_superuser:
             raise PermissionDenied(
                 "Apenas o administrador da instalação pode criar escritórios."
             )
 
-    def get(self, request: HttpRequest) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest) -> HttpResponse:
         self._ensure_installation_administrator(request)
         return render(request, self.template_name, {"form": AccountingOfficeForm()})
 
-    def post(self, request: HttpRequest) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest) -> HttpResponse:
         self._ensure_installation_administrator(request)
         form = AccountingOfficeForm(request.POST)
         if not form.is_valid():
@@ -216,25 +214,18 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
         context.update(
             {
                 "company": company,
-                "policy": getattr(company, "sync_policy", None),
+                "policy": getattr(company, "download_policy", None),
                 "active_certificate": company.digital_certificates.filter(
                     status=DigitalCertificate.Status.ACTIVE
                 ).first(),
                 "latest_certificate_upload": company.certificate_uploads.order_by(
                     "-created_at"
                 ).first(),
-                "nsu_controls": company.nsu_controls.order_by("environment", "service"),
-                "sync_requests": company.sync_requests.select_related(
+                "download_requests": company.download_requests.select_related(
                     "requested_by"
-                ).order_by("-requested_at")[:12],
-                "documents": company.fiscal_documents.order_by(
-                    "-last_received_at"
-                )[:12],
-                "distribution_batches": company.distribution_batches.order_by(
-                    "-created_at"
-                )[:12],
+                ).order_by("-created_at")[:12],
+                "documents": company.invoices.order_by("-last_received_at")[:12],
                 "can_manage": can_manage,
-                "can_correct_nsu_cursor": can_manage,
             }
         )
         return context
@@ -243,10 +234,10 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
 class CompanyCreateView(LoginRequiredMixin, View):
     template_name = "operations/company_form.html"
 
-    def _offices(self):
+    def _offices(self) -> Any:
         return manageable_offices(self.request.user)
 
-    def get(self, request: HttpRequest) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest) -> HttpResponse:
         offices = self._offices()
         if not offices.exists():
             raise PermissionDenied("Seu perfil não administra nenhum escritório.")
@@ -256,7 +247,7 @@ class CompanyCreateView(LoginRequiredMixin, View):
             {"form": ClientCompanyCreateForm(offices=offices), "is_create": True},
         )
 
-    def post(self, request: HttpRequest) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest) -> HttpResponse:
         offices = self._offices()
         if not offices.exists():
             raise PermissionDenied("Seu perfil não administra nenhum escritório.")
@@ -270,22 +261,9 @@ class CompanyCreateView(LoginRequiredMixin, View):
             )
         try:
             with transaction.atomic():
-                company = form.save()
-                SyncPolicy.objects.create(
-                    company=company,
-                    mode=SyncPolicy.Mode.HYBRID,
-                    frequency=SyncPolicy.Frequency.DAILY,
-                    scheduled_time=time(2, 0),
-                    is_active=False,
-                )
-                initial_nsu = form.cleaned_data["initial_nsu"]
-                if initial_nsu:
-                    configure_initial_nsu(
-                        company_id=company.pk,
-                        environment=company.fiscal_environment,
-                        initial_nsu=initial_nsu,
-                        actor=request.user,
-                    )
+                company = form.save(commit=False)
+                company.save()
+                DownloadPolicy.objects.create(company=company)
                 certificate_file = form.cleaned_data.get("certificate_file")
                 if certificate_file is not None:
                     stage_certificate_upload(
@@ -301,7 +279,6 @@ class CompanyCreateView(LoginRequiredMixin, View):
                     target=f"organizations.client_company:{company.pk}",
                     payload={
                         "office_id": company.office_id,
-                        "environment": company.fiscal_environment,
                         "certificate_staged": certificate_file is not None,
                     },
                 )
@@ -315,74 +292,8 @@ class CompanyCreateView(LoginRequiredMixin, View):
             )
         messages.success(
             request,
-            "Empresa cadastrada. A política automática inicia desativada; "
-            "configure-a antes da primeira consulta.",
-        )
-        return redirect("company-detail", company_id=company.pk)
-
-
-class CompanyNsuCursorView(CompanyAccessMixin, View):
-    """Correct the continuation cursor through an explicit admin-only flow."""
-
-    template_name = "operations/initial_nsu_form.html"
-    manage_required = True
-
-    @staticmethod
-    def _current_last_nsu(company: ClientCompany) -> str:
-        control = company.nsu_controls.filter(
-            environment=company.fiscal_environment,
-            service="nfe_distribution",
-        ).first()
-        return control.last_nsu if control is not None else ""
-
-    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
-        company = self.get_company()
-        return render(
-            request,
-            self.template_name,
-            {
-                "company": company,
-                "form": NsuCursorCorrectionForm(
-                    company=company,
-                    current_last_nsu=self._current_last_nsu(company),
-                ),
-            },
-        )
-
-    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
-        company = self.get_company()
-        form = NsuCursorCorrectionForm(
-            request.POST,
-            company=company,
-            current_last_nsu=self._current_last_nsu(company),
-        )
-        if not form.is_valid():
-            return render(
-                request,
-                self.template_name,
-                {"company": company, "form": form},
-                status=400,
-            )
-        try:
-            correct_nsu_cursor(
-                company_id=company.pk,
-                environment=company.fiscal_environment,
-                last_nsu=form.cleaned_data["last_nsu"],
-                reason=form.cleaned_data["reason"],
-                actor=request.user,
-            )
-        except NsuCursorCorrectionError as error:
-            form.add_error("last_nsu", str(error))
-            return render(
-                request,
-                self.template_name,
-                {"company": company, "form": form},
-                status=400,
-            )
-        messages.success(
-            request,
-            "Cursor NSU corrigido. A próxima consulta continuará após esse valor "
-            "e continuará respeitando qualquer espera imposta pela SEFAZ.",
+            "Empresa cadastrada. Solicite arquivos por período "
+            "ou configure o agendamento automático.",
         )
         return redirect("company-detail", company_id=company.pk)
 
@@ -391,7 +302,7 @@ class CompanyUpdateView(CompanyAccessMixin, View):
     template_name = "operations/company_form.html"
     manage_required = True
 
-    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
         return render(
             request,
@@ -405,7 +316,7 @@ class CompanyUpdateView(CompanyAccessMixin, View):
             },
         )
 
-    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
         form = ClientCompanyForm(
             request.POST,
@@ -429,7 +340,6 @@ class CompanyUpdateView(CompanyAccessMixin, View):
                 payload={
                     "office_id": company.office_id,
                     "changed_fields": changed_fields,
-                    "environment": company.fiscal_environment,
                     "status": company.status,
                 },
             )
@@ -441,30 +351,22 @@ class CompanyPolicyUpdateView(CompanyAccessMixin, View):
     template_name = "operations/policy_form.html"
     manage_required = True
 
-    def get_policy(self) -> SyncPolicy:
+    def get_policy(self) -> DownloadPolicy:
         company = self.get_company()
-        policy, _ = SyncPolicy.objects.get_or_create(
-            company=company,
-            defaults={
-                "mode": SyncPolicy.Mode.HYBRID,
-                "frequency": SyncPolicy.Frequency.DAILY,
-                "scheduled_time": time(2, 0),
-                "is_active": False,
-            },
-        )
+        policy, _ = DownloadPolicy.objects.get_or_create(company=company)
         return policy
 
-    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         policy = self.get_policy()
         return render(
             request,
             self.template_name,
-            {"form": SyncPolicyForm(instance=policy), "company": policy.company},
+            {"form": DownloadPolicyForm(instance=policy), "company": policy.company},
         )
 
-    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         policy = self.get_policy()
-        form = SyncPolicyForm(request.POST, instance=policy)
+        form = DownloadPolicyForm(request.POST, instance=policy)
         if not form.is_valid():
             return render(
                 request,
@@ -476,17 +378,18 @@ class CompanyPolicyUpdateView(CompanyAccessMixin, View):
             policy = form.save()
             AuditLog.objects.create(
                 actor=request.user,
-                action="fiscal.sync_policy_updated",
-                target=f"fiscal.sync_policy:{policy.pk}",
+                action="fiscal.download_policy_updated",
+                target=f"fiscal.download_policy:{policy.pk}",
                 payload={
                     "company_id": policy.company_id,
                     "mode": policy.mode,
                     "frequency": policy.frequency,
                     "is_active": policy.is_active,
-                    "auto_correct_nsu": policy.auto_correct_nsu,
+                    "period_strategy": policy.period_strategy,
+                    "formats": policy.formats,
                 },
             )
-        messages.success(request, "Política de sincronização atualizada.")
+        messages.success(request, "Agendamento de downloads atualizado.")
         return redirect("company-detail", company_id=policy.company_id)
 
 
@@ -494,7 +397,7 @@ class CompanyCertificateUploadView(CompanyAccessMixin, View):
     template_name = "operations/certificate_upload.html"
     manage_required = True
 
-    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
         return render(
             request,
@@ -508,7 +411,7 @@ class CompanyCertificateUploadView(CompanyAccessMixin, View):
             },
         )
 
-    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
         form = CertificateUploadForm(request.POST, request.FILES)
         if not form.is_valid():
@@ -539,7 +442,7 @@ class CompanyCertificateUploadView(CompanyAccessMixin, View):
             if result.created:
                 messages.success(
                     request,
-                    "Certificado recebido para processamento seguro pelo worker.",
+                    "Certificado recebido. Aguarde a validação para utilizá-lo.",
                 )
             else:
                 if result.upload.status == CertificateUpload.Status.SUBMITTED:
@@ -557,35 +460,6 @@ class CompanyCertificateUploadView(CompanyAccessMixin, View):
         return redirect("company-detail", company_id=company.pk)
 
 
-class ManualSyncRequestView(CompanyAccessMixin, View):
-    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
-        company = self.get_company()
-        try:
-            result = request_synchronization(
-                company_id=company.pk,
-                environment=company.fiscal_environment,
-                trigger=SyncRequest.Trigger.MANUAL,
-                actor=request.user,
-            )
-        except SynchronizationRequestError as error:
-            messages.error(request, str(error))
-        else:
-            result.request.refresh_from_db()
-            if result.request.status == SyncRequest.Status.FAILED:
-                messages.error(request, result.request.result_detail)
-            elif result.created:
-                messages.success(
-                    request,
-                    "Solicitação incluída na fila de sincronização.",
-                )
-            else:
-                messages.info(
-                    request,
-                    "Já existe uma solicitação ativa para este ambiente.",
-                )
-        return redirect("company-detail", company_id=company.pk)
-
-
 class CompanyArchiveView(CompanyAccessMixin, View):
     """Archive a company after an explicit retention acknowledgement.
 
@@ -597,7 +471,7 @@ class CompanyArchiveView(CompanyAccessMixin, View):
     template_name = "operations/company_archive_confirm.html"
     manage_required = True
 
-    def get(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
         return render(
             request,
@@ -605,7 +479,7 @@ class CompanyArchiveView(CompanyAccessMixin, View):
             {"company": company, "form": CompanyArchiveForm(company=company)},
         )
 
-    def post(self, request: HttpRequest, company_id: int) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest, company_id: int) -> HttpResponse:
         company = self.get_company()
         form = CompanyArchiveForm(request.POST, company=company)
         if not form.is_valid():
@@ -618,7 +492,7 @@ class CompanyArchiveView(CompanyAccessMixin, View):
         with transaction.atomic():
             company.status = ClientCompany.Status.ARCHIVED
             company.save(update_fields=("status", "updated_at"))
-            SyncPolicy.objects.filter(company=company).update(is_active=False)
+            DownloadPolicy.objects.filter(company=company).update(is_active=False)
             AuditLog.objects.create(
                 actor=request.user,
                 action="organizations.company_archived",
@@ -635,95 +509,6 @@ class CompanyArchiveView(CompanyAccessMixin, View):
             "a política automática foi desativada.",
         )
         return redirect("company-list")
-
-
-class DistributionBatchReprocessView(CompanyAccessMixin, View):
-    manage_required = True
-
-    def post(
-        self, request: HttpRequest, company_id: int, batch_id: int
-    ) -> HttpResponse:
-        company = self.get_company()
-        batch = get_object_or_404(
-            DistributionBatch.objects.filter(company=company),
-            pk=batch_id,
-        )
-        submission = request_distribution_batch_reprocessing(batch_id=batch.pk)
-        if not submission.created:
-            messages.info(
-                request,
-                "Esse lote não está disponível para um novo reprocessamento local.",
-            )
-            return redirect("company-detail", company_id=company.pk)
-        AuditLog.objects.create(
-            actor=request.user,
-            action="fiscal.distribution_batch_reprocess_requested",
-            target=f"fiscal.distribution_batch:{batch.pk}",
-            payload={"company_id": company.pk},
-        )
-
-        def dispatch() -> None:
-            from apps.fiscal.tasks import reprocess_distribution_batch_task
-
-            reprocess_distribution_batch_task.delay(batch.pk)
-
-        transaction.on_commit(dispatch)
-        messages.success(
-            request,
-            "Reprocessamento local incluído na fila. Nenhuma consulta será enviada "
-            "à SEFAZ.",
-        )
-        return redirect("company-detail", company_id=company.pk)
-
-
-class FiscalDocumentListView(LoginRequiredMixin, ListView):
-    template_name = "operations/document_list.html"
-    context_object_name = "documents"
-    paginate_by = 50
-
-    def get_queryset(self) -> QuerySet[FiscalDocument]:
-        queryset = FiscalDocument.objects.filter(
-            company__in=accessible_companies(self.request.user)
-        ).select_related("company")
-        term = self.request.GET.get("q", "").strip().upper()
-        model = self.request.GET.get("model", "")
-        if term:
-            queryset = queryset.filter(
-                Q(access_key__icontains=term) | Q(company__legal_name__icontains=term)
-            )
-        if model in {"55", "65"}:
-            queryset = queryset.filter(model=model)
-        return queryset.order_by("-last_received_at")
-
-    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
-        context = super().get_context_data(**kwargs)
-        context["query"] = self.request.GET.get("q", "")
-        context["selected_model"] = self.request.GET.get("model", "")
-        return context
-
-
-class FiscalDocumentDownloadView(LoginRequiredMixin, View):
-    def get(self, request: HttpRequest, document_id: int) -> FileResponse:
-        document = get_object_or_404(
-            FiscalDocument.objects.filter(
-                company__in=accessible_companies(request.user)
-            ),
-            pk=document_id,
-        )
-        try:
-            path = FiscalStorage().path_for_read(document.xml_path)
-        except FiscalStorageError as error:
-            raise Http404("O XML não está disponível no volume configurado.") from error
-        AuditLog.objects.create(
-            actor=request.user,
-            action="fiscal.xml_downloaded",
-            target=f"fiscal.document:{document.pk}",
-            payload={
-                "company_id": document.company_id,
-                "xml_sha256": document.xml_sha256,
-            },
-        )
-        return FileResponse(path.open("rb"), as_attachment=True, filename=path.name)
 
 
 class OperationAlertListView(LoginRequiredMixin, ListView):
@@ -764,7 +549,7 @@ class OperationAlertListView(LoginRequiredMixin, ListView):
 
 
 class OperationAlertResolveView(LoginRequiredMixin, View):
-    def post(self, request: HttpRequest, alert_id: int) -> HttpResponse:
+    def post(self, request: AuthenticatedHttpRequest, alert_id: int) -> HttpResponse:
         alert = get_object_or_404(
             OperationAlert.objects.filter(
                 company__in=manageable_companies(request.user)

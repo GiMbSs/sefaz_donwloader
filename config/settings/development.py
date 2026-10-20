@@ -52,4 +52,3 @@ if DEV_MODE:
         "CERTIFICATE_UPLOAD_PUBLIC_KEY_FILE",
         DEV_RUNTIME_ROOT / "certificate-public" / "certificate-upload-public.key",
     )
-

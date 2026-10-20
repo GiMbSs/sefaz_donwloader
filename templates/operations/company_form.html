@@ -9,12 +9,12 @@
     {% if is_create %}
       <aside class="risk-note">
         <strong>Antes de salvar</strong>
-        <span>Escolha o ambiente com cuidado. Homologação é indicada para testes; produção somente deve ser escolhida para uma empresa autorizada. Se a contabilidade já possui histórico, informe opcionalmente o último NSU processado para continuar dali. O certificado é opcional neste passo e sua senha nunca é exibida ou gravada em texto no banco.</span>
+        <span>Cadastre os dados da empresa e seu vínculo com o escritório. O certificado A1 pode ser enviado agora ou posteriormente. Depois, escolha um período de emissão ou configure os downloads automáticos.</span>
       </aside>
     {% else %}
       <aside class="risk-note">
         <strong>Atenção a alterações fiscais</strong>
-        <span>Inativar a empresa interrompe novas sincronizações. O ambiente não pode ser alterado quando já existir histórico de NSU ou consultas, para preservar a separação fiscal.</span>
+        <span>Inativar a empresa interrompe novos downloads automáticos e manuais. Os pedidos e arquivos anteriores continuam preservados.</span>
       </aside>
     {% endif %}
     <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>

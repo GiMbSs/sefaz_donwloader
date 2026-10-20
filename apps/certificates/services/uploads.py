@@ -112,9 +112,7 @@ def stage_certificate_upload(
                     "A chave pública do processamento de certificados não está "
                     "disponível."
                 )
-            raise CertificateUploadError(
-                message
-            ) from error
+            raise CertificateUploadError(message) from error
         upload.save()
         AuditLog.objects.create(
             actor=uploaded_by,

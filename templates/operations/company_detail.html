@@ -1,81 +1,19 @@
 {% extends 'operations/base.html' %}
-
+{% load download_ui %}
 {% block title %}{{ company.legal_name }} · SEFAZ Downloader{% endblock %}
 {% block page_title %}{{ company.legal_name }}{% endblock %}
-
 {% block content %}
-  <section class="company-heading">
-    <div>
-      <p class="lede">CNPJ {{ company.tax_identifier }} · {{ company.state }} · Ambiente {{ company.get_fiscal_environment_display }}{% if company.state_registration %} · IE {{ company.state_registration }}{% endif %}</p>
-      <p class="muted">Escritório responsável: {{ company.office.legal_name }}</p>
-    </div>
-    <div class="action-row">
-      {% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar política</a>{% if can_correct_nsu_cursor %}<a class="button button-secondary" href="{% url 'company-nsu-cursor' company.pk %}">Corrigir cursor NSU</a>{% endif %}<a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a><a class="button button-danger" href="{% url 'company-archive' company.pk %}">Excluir (arquivar)</a>{% endif %}
-    </div>
-  </section>
-
-  <section class="company-state-grid">
-    <article class="state-block">
-      <span class="state-label">Situação da empresa</span><strong><span class="status status-{{ company.status }}">{{ company.get_status_display }}</span></strong>
-    </article>
-    <article class="state-block">
-      <span class="state-label">Política</span><strong>{% if policy %}{{ policy.get_mode_display }} · {{ policy.get_frequency_display }}{% else %}Não configurada{% endif %}</strong><small>{% if policy and policy.scheduled_time %}{{ policy.scheduled_time|time:'H:i' }} · {{ policy.timezone }}{% endif %}{% if policy and not policy.is_active %} · desativada{% endif %}</small>
-    </article>
-    <article class="state-block">
-      <span class="state-label">Certificado A1</span>
-      {% if active_certificate %}<strong>Válido até {{ active_certificate.not_valid_after|date:'d/m/Y' }}</strong><small>{{ active_certificate.subject }}</small>{% elif latest_certificate_upload %}<strong><span class="status status-{{ latest_certificate_upload.status }}">{{ latest_certificate_upload.get_status_display }}</span></strong><small>{{ latest_certificate_upload.error_message|default:'Certificado recebido para processamento seguro.' }}</small>{% else %}<strong class="critical-text">Não cadastrado</strong><small>{% if can_manage %}Envie o certificado A1 para habilitar a operação fiscal.{% else %}Solicite o cadastro do certificado a uma pessoa administradora.{% endif %}</small>{% endif %}
-    </article>
-  </section>
-
-  <section class="request-band">
-    <div><h2>Solicitar sincronização</h2><p>Ambiente cadastrado: {{ company.get_fiscal_environment_display }}. Uma nova solicitação só é criada se não houver operação ativa para este ambiente.</p></div>
-    <form method="post" action="{% url 'company-sync' company.pk %}" class="inline-form">
-      {% csrf_token %}
-      <button class="button button-primary" type="submit">Incluir na fila</button>
-    </form>
-  </section>
-
-  <div class="workspace-grid">
-    <section class="panel panel-wide">
-      <div class="section-heading"><div><h2>Controles NSU</h2><p>Cursores de continuidade, separados por ambiente.</p></div></div>
-      {% if nsu_controls %}
-        <div class="table-wrap"><table><thead><tr><th>Ambiente</th><th>Último NSU</th><th>Máximo informado</th><th>Situação</th></tr></thead><tbody>{% for control in nsu_controls %}<tr><td>{{ control.get_environment_display }}</td><td>{{ control.last_nsu|default:'—' }}</td><td>{{ control.maximum_nsu|default:'—' }}</td><td>{% if control.next_allowed_at %}<span class="status status-waiting">Liberado {{ control.next_allowed_at|date:'d/m H:i' }}</span>{% else %}<span class="status status-succeeded">Disponível</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-      {% else %}<p class="quiet">{% if can_correct_nsu_cursor %}A contabilidade já tem histórico? <a href="{% url 'company-nsu-cursor' company.pk %}">Defina o último NSU processado</a> antes da primeira solicitação. Caso contrário, o controle será iniciado na primeira consulta.{% else %}O controle será criado na primeira solicitação para cada ambiente.{% endif %}</p>{% endif %}
-    </section>
-    <aside class="panel panel-side"><div class="section-heading"><div><h2>Próximo passo</h2></div></div>{% if not active_certificate and can_manage %}<p class="quiet">Envie o certificado A1. O navegador o encaminhará cifrado para processamento exclusivo no worker.</p>{% elif not active_certificate %}<p class="quiet">Solicite a uma pessoa administradora o cadastro do certificado A1 desta empresa.</p>{% elif policy and not policy.is_active %}<p class="quiet">Ative a política para permitir novas solicitações.</p>{% else %}<p class="quiet">Acompanhe a fila abaixo; cada retorno arquivado mantém o lote e o XML original.</p>{% endif %}</aside>
-  </div>
-
-  <section class="panel panel-full"><div class="section-heading"><div><h2>Solicitações recentes</h2><p>Histórico operacional da empresa.</p></div></div>{% if sync_requests %}<div class="table-wrap"><table><thead><tr><th>Solicitada</th><th>Ambiente</th><th>Origem</th><th>Situação</th><th>Detalhe</th></tr></thead><tbody>{% for item in sync_requests %}<tr><td>{{ item.requested_at|date:'d/m/Y H:i' }}</td><td>{{ item.get_environment_display }}</td><td>{{ item.get_trigger_display }}</td><td><span class="status status-{{ item.status }}">{{ item.get_status_display }}</span></td><td>{{ item.result_detail|default:'—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">Nenhuma solicitação foi criada para esta empresa.</p>{% endif %}</section>
-
-  <section class="panel panel-full">
-    <div class="section-heading">
-      <div>
-        <h2>Lotes arquivados</h2>
-        <p>Reprocesse apenas falhas locais a partir da resposta original; esta ação não consulta a SEFAZ.</p>
-      </div>
-    </div>
-    {% if distribution_batches %}
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Recebido</th><th>cStat</th><th>Documentos</th><th>Processamento</th><th>Detalhe</th><th></th></tr></thead>
-          <tbody>
-            {% for batch in distribution_batches %}
-              <tr>
-                <td>{{ batch.created_at|date:'d/m/Y H:i' }}</td><td>{{ batch.status_code }}</td><td>{{ batch.document_count }}</td>
-                <td><span class="status status-{{ batch.processing_status }}">{{ batch.get_processing_status_display }}</span></td>
-                <td>{{ batch.processing_error|default:batch.reason|default:'—' }}</td>
-                <td>
-                  {% if can_manage and batch.processing_status == 'failed' %}
-                    <form method="post" action="{% url 'batch-reprocess' company.pk batch.pk %}">{% csrf_token %}<button class="button button-secondary" type="submit">Reprocessar localmente</button></form>
-                  {% else %}<span class="quiet">—</span>{% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}<p class="quiet">Nenhum retorno de distribuição foi arquivado para esta empresa.</p>{% endif %}
-  </section>
-
-  <section class="panel panel-full"><div class="section-heading"><div><h2>Documentos recentes</h2><p>Arquivos disponíveis no volume local de notas.</p></div><a class="table-link" href="{% url 'document-list' %}?q={{ company.tax_identifier }}">Ver todos</a></div>{% if documents %}<div class="table-wrap"><table><thead><tr><th>Chave</th><th>Modelo</th><th>Tipo</th><th>Validação</th><th></th></tr></thead><tbody>{% for document in documents %}<tr><td class="key-cell">{{ document.access_key }}</td><td>{{ document.model }}</td><td>{{ document.get_kind_display }}</td><td><span class="status status-{{ document.validation_status }}">{{ document.get_validation_status_display }}</span></td><td><a class="table-link" href="{% url 'document-download' document.pk %}">Baixar XML</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">Nenhum XML foi distribuído para esta empresa.</p>{% endif %}</section>
+<section class="company-heading">
+  <div><p class="lede">CNPJ {{ company.tax_identifier }} · {{ company.state }}{% if company.state_registration %} · IE {{ company.state_registration }}{% endif %}</p><p class="muted">Escritório responsável: {{ company.office.legal_name }}</p></div>
+  <div class="action-row">{% if can_manage %}<a class="button button-secondary" href="{% url 'company-update' company.pk %}">Editar cadastro</a><a class="button button-secondary" href="{% url 'company-policy' company.pk %}">Configurar agendamento</a><a class="button button-secondary" href="{% url 'company-certificate-upload' company.pk %}">Enviar certificado A1</a><a class="button button-danger" href="{% url 'company-archive' company.pk %}">Arquivar empresa</a>{% endif %}</div>
+</section>
+<section class="company-state-grid" aria-label="Situação da empresa e do agendamento">
+  <article class="state-block"><span class="state-label">Empresa</span><strong>{{ company.get_status_display }}</strong></article>
+  <article class="state-block"><span class="state-label">Agendamento</span><strong>{% if policy %}{{ policy.get_mode_display }} · {{ policy.get_frequency_display }}{% else %}Não configurado{% endif %}</strong><small>{% if policy.scheduled_time %}{{ policy.scheduled_time|time:'H:i' }} · {{ policy.timezone }}{% endif %}{% if policy.is_active %} · ativo{% else %} · sem execução automática{% endif %}</small></article>
+  <article class="state-block"><span class="state-label">Certificado A1</span>{% if active_certificate %}<strong>Válido até {{ active_certificate.not_valid_after|date:'d/m/Y' }}</strong>{% elif latest_certificate_upload %}<strong>{{ latest_certificate_upload.get_status_display }}</strong><small>{{ latest_certificate_upload.error_message }}</small>{% else %}<strong>Não cadastrado</strong><small>Solicite o cadastro do A1 desta empresa ao administrador.</small>{% endif %}</article>
+</section>
+<section class="request-band"><div><h2>Solicitar arquivos</h2><p>Escolha o período de emissão e receba os ZIPs de XML e TXT da SEFAZ-PB.</p></div>{% if company.status == 'active' %}<a class="button button-primary" href="{% url 'company-download-create' company.pk %}">Escolher período</a>{% else %}<p class="quiet">Novas consultas ficam indisponíveis enquanto a empresa estiver inativa ou arquivada.</p>{% endif %}</section>
+<section class="panel panel-full"><div class="section-heading"><div><h2>Pedidos recentes</h2><p>Downloads manuais e automáticos desta empresa.</p></div><a class="table-link" href="{% url 'company-download-list' company.pk %}">Ver todos os pedidos</a></div>
+{% if download_requests %}<div class="table-wrap"><table><thead><tr><th>Solicitado</th><th>Período</th><th>Documento</th><th>Formatos</th><th>Situação</th><th>Ação</th></tr></thead><tbody>{% for item in download_requests %}<tr><td>{{ item.created_at|date:'d/m/Y H:i' }}</td><td>{{ item.start_date|date:'d/m/Y' }} a {{ item.end_date|date:'d/m/Y' }}</td><td>{{ item.get_document_model_display }}</td><td>{{ item.formats|join:', '|upper }}</td><td><span class="status status-{{ item.status }}">{{ item.status|download_status }}</span></td><td><a class="table-link" href="{% url 'download-request-detail' item.pk %}">Ver pedido</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">Nenhum pedido registrado. Escolha um período ou configure o agendamento para iniciar os downloads.</p>{% endif %}</section>
+<section class="panel panel-full"><div class="section-heading"><div><h2>Notas emitidas</h2><p>Notas e eventos são preservados separadamente.</p></div><a class="table-link" href="{% url 'document-list' %}?q={{ company.tax_identifier|urlencode }}">Ver documentos</a></div>{% if documents %}<div class="table-wrap"><table><thead><tr><th>Número da nota</th><th>Chave de acesso</th><th>Emissão</th><th>Ação</th></tr></thead><tbody>{% for document in documents %}<tr><td>{{ document.document_label }} nº {{ document.number|default_if_none:'—' }}</td><td class="key-cell">{{ document.access_key }}</td><td>{{ document.issued_on|date:'d/m/Y' }}</td><td><a class="table-link" href="{% url 'invoice-xml-download' document.pk %}">Baixar XML</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="quiet">As notas aparecerão após a conferência dos arquivos baixados.</p>{% endif %}</section>
 {% endblock %}

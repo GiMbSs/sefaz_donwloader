@@ -102,11 +102,14 @@ def test_staged_upload_only_stores_encrypted_material_and_is_idempotent(tmp_path
     assert repeated.upload.pk == first.upload.pk
     assert b"test-pfx-content" not in bytes(first.upload.encrypted_payload)
     assert b"senha-secreta" not in bytes(first.upload.encrypted_password)
-    assert worker_envelope.decrypt(
-        bytes(first.upload.encrypted_payload),
-        request_id=first.upload.request_id,
-        purpose="pfx",
-    ) == b"test-pfx-content"
+    assert (
+        worker_envelope.decrypt(
+            bytes(first.upload.encrypted_payload),
+            request_id=first.upload.request_id,
+            purpose="pfx",
+        )
+        == b"test-pfx-content"
+    )
     assert AuditLog.objects.filter(action="certificates.upload_staged").count() == 1
 
 
@@ -216,11 +219,14 @@ def test_worker_stores_hashed_password_and_client_scoped_encrypted_files(tmp_pat
     )
     user.delete()
 
-    assert process_certificate_upload(
-        submission.upload.pk,
-        envelope=worker_envelope,
-        vault=vault,
-    ) == CertificateUpload.Status.COMPLETED
+    assert (
+        process_certificate_upload(
+            submission.upload.pk,
+            envelope=worker_envelope,
+            vault=vault,
+        )
+        == CertificateUpload.Status.COMPLETED
+    )
 
     submission.upload.refresh_from_db()
     certificate = submission.upload.certificate

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, cast
+
 from django import forms
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import QuerySet
@@ -10,8 +12,6 @@ from apps.certificates.services.uploads import (
     CertificateUploadError,
     validate_certificate_upload_metadata,
 )
-from apps.fiscal.models import SyncPolicy
-from apps.fiscal.services.sync import normalize_initial_nsu
 from apps.organizations.models import AccountingOffice, ClientCompany
 from apps.organizations.validators import normalize_tax_identifier
 
@@ -26,7 +26,13 @@ WEEKDAY_CHOICES = (
 )
 
 
-class AccountingOfficeForm(forms.ModelForm):
+if TYPE_CHECKING:
+    ModelFormBase = forms.ModelForm[Any]
+else:
+    ModelFormBase = forms.ModelForm
+
+
+class AccountingOfficeForm(ModelFormBase):
     """Initial tenant registration, limited to the installation administrator."""
 
     tax_identifier = forms.CharField(
@@ -46,7 +52,7 @@ class AccountingOfficeForm(forms.ModelForm):
         return normalize_tax_identifier(self.cleaned_data["tax_identifier"])
 
 
-class ClientCompanyForm(forms.ModelForm):
+class ClientCompanyForm(ModelFormBase):
     tax_identifier = forms.CharField(
         label="CNPJ",
         max_length=18,
@@ -57,13 +63,13 @@ class ClientCompanyForm(forms.ModelForm):
 
     class Meta:
         model = ClientCompany
+        labels = {"office": "Escritório contábil"}
         fields = (
             "office",
             "legal_name",
             "tax_identifier",
             "state_registration",
             "state",
-            "fiscal_environment",
             "status",
         )
         widgets = {
@@ -77,15 +83,15 @@ class ClientCompanyForm(forms.ModelForm):
 
     def __init__(
         self,
-        *args,
+        *args: Any,
         offices: QuerySet[AccountingOffice] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.fields["office"].queryset = (
-            offices if offices is not None else AccountingOffice.objects.none()
-        )
-        self.fields["status"].choices = (
+        cast(
+            "forms.ModelChoiceField[AccountingOffice]", self.fields["office"]
+        ).queryset = offices if offices is not None else AccountingOffice.objects.none()
+        cast(forms.TypedChoiceField, self.fields["status"]).choices = (
             (ClientCompany.Status.ACTIVE, ClientCompany.Status.ACTIVE.label),
             (ClientCompany.Status.INACTIVE, ClientCompany.Status.INACTIVE.label),
         )
@@ -94,27 +100,14 @@ class ClientCompanyForm(forms.ModelForm):
         return normalize_tax_identifier(self.cleaned_data["tax_identifier"])
 
     def clean_state(self) -> str:
-        return self.cleaned_data["state"].strip().upper()
+        return str(self.cleaned_data["state"]).strip().upper()
 
 
 class ClientCompanyCreateForm(ClientCompanyForm):
-    initial_nsu = forms.CharField(
-        label="NSU inicial (opcional)",
-        max_length=15,
-        required=False,
-        help_text=(
-            "Último NSU já processado pela contabilidade. O próximo pedido "
-            "buscará somente a sequência posterior. Administradores podem "
-            "corrigir o cursor posteriormente, com registro de auditoria."
-        ),
-        widget=forms.TextInput(
-            attrs={"inputmode": "numeric", "maxlength": 15, "autocomplete": "off"}
-        ),
-    )
     certificate_file = forms.FileField(
         label="Certificado A1 (opcional)",
         required=False,
-        help_text="Arquivo .pfx ou .p12 de até 5 MB; será validado pelo worker.",
+        help_text="Arquivo .pfx ou .p12 de até 5 MB; a validação ocorre após o envio.",
         widget=forms.ClearableFileInput(
             attrs={"accept": ".pfx,.p12,application/x-pkcs12"}
         ),
@@ -127,7 +120,7 @@ class ClientCompanyCreateForm(ClientCompanyForm):
         widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
     )
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.order_fields(
             (
@@ -136,31 +129,22 @@ class ClientCompanyCreateForm(ClientCompanyForm):
                 "tax_identifier",
                 "state_registration",
                 "state",
-                "fiscal_environment",
-                "initial_nsu",
                 "status",
                 "certificate_file",
                 "certificate_password",
             )
         )
 
-    def clean_initial_nsu(self) -> str:
-        value = self.cleaned_data["initial_nsu"]
-        if not value:
-            return ""
-        try:
-            return normalize_initial_nsu(value)
-        except ValueError as error:
-            raise forms.ValidationError(str(error)) from error
-
     def clean_certificate_file(self) -> UploadedFile | None:
-        certificate_file = self.cleaned_data.get("certificate_file")
+        certificate_file = cast(
+            UploadedFile | None, self.cleaned_data.get("certificate_file")
+        )
         if certificate_file is None:
             return None
         try:
             validate_certificate_upload_metadata(
-                filename=certificate_file.name,
-                payload_size=certificate_file.size,
+                filename=certificate_file.name or "",
+                payload_size=certificate_file.size or 0,
                 password="valid-for-size-check",
             )
         except CertificateUploadError as error:
@@ -168,7 +152,7 @@ class ClientCompanyCreateForm(ClientCompanyForm):
         return certificate_file
 
     def clean(self) -> dict[str, object]:
-        cleaned_data = super().clean()
+        cleaned_data = super().clean() or {}
         certificate_file = cleaned_data.get("certificate_file")
         password = cleaned_data.get("certificate_password")
         if bool(certificate_file) != bool(password):
@@ -178,49 +162,6 @@ class ClientCompanyCreateForm(ClientCompanyForm):
             else:
                 self.add_error("certificate_file", message)
         return cleaned_data
-
-
-class SyncPolicyForm(forms.ModelForm):
-    weekdays = forms.MultipleChoiceField(
-        label="Dias ativos",
-        choices=WEEKDAY_CHOICES,
-        required=False,
-        widget=forms.CheckboxSelectMultiple,
-        help_text="Sem seleção significa todos os dias.",
-    )
-
-    class Meta:
-        model = SyncPolicy
-        fields = (
-            "mode",
-            "frequency",
-            "scheduled_time",
-            "timezone",
-            "weekdays",
-            "monthday",
-            "is_active",
-            "auto_correct_nsu",
-        )
-        widgets = {
-            "scheduled_time": forms.TimeInput(attrs={"type": "time"}),
-            "timezone": forms.TextInput(attrs={"autocomplete": "off"}),
-        }
-        help_texts = {
-            "auto_correct_nsu": (
-                "Autoriza alinhar o cursor ao ultNSU válido retornado pela SEFAZ "
-                "na rejeição 656 por sequência incorreta, com auditoria. "
-                "A consulta será retomada após a espera obrigatória. "
-                "Pode avançar além de documentos ainda não baixados; não recupera "
-                "lacunas. Coordene outros aplicativos que consultam este CNPJ."
-            ),
-        }
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.fields["weekdays"].initial = [str(day) for day in self.instance.weekdays]
-
-    def clean_weekdays(self) -> list[int]:
-        return [int(day) for day in self.cleaned_data["weekdays"]]
 
 
 class CompanyArchiveForm(forms.Form):
@@ -237,66 +178,9 @@ class CompanyArchiveForm(forms.Form):
         required=True,
     )
 
-    def __init__(self, *args, company: ClientCompany, **kwargs) -> None:
+    def __init__(self, *args: Any, company: ClientCompany, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.company = company
-
-    def clean_confirmation_tax_identifier(self) -> str:
-        value = normalize_tax_identifier(
-            self.cleaned_data["confirmation_tax_identifier"]
-        )
-        if value != self.company.tax_identifier:
-            raise forms.ValidationError("O CNPJ informado não corresponde à empresa.")
-        return value
-
-
-class NsuCursorCorrectionForm(forms.Form):
-    last_nsu = forms.CharField(
-        label="Último NSU que deve ser usado",
-        max_length=15,
-        help_text=(
-            "Informe o último NSU já processado. O próximo pedido consultará "
-            "somente os NSUs posteriores."
-        ),
-        widget=forms.TextInput(
-            attrs={"inputmode": "numeric", "maxlength": 15, "autocomplete": "off"}
-        ),
-    )
-    confirmation_tax_identifier = forms.CharField(
-        label="Confirme o CNPJ da empresa",
-        max_length=18,
-        widget=forms.TextInput(attrs={"autocomplete": "off"}),
-    )
-    reason = forms.CharField(
-        label="Motivo da correção",
-        max_length=500,
-        help_text="Não inclua senha de certificado, XML, SOAP ou outras credenciais.",
-        widget=forms.Textarea(attrs={"rows": 3, "autocomplete": "off"}),
-    )
-    understand_consequences = forms.BooleanField(
-        label=(
-            "Entendo que um cursor incorreto pode deixar documentos pendentes ou "
-            "provocar bloqueio por consumo indevido na SEFAZ."
-        ),
-        required=True,
-    )
-
-    def __init__(
-        self,
-        *args,
-        company: ClientCompany,
-        current_last_nsu: str = "",
-        **kwargs,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.company = company
-        self.fields["last_nsu"].initial = current_last_nsu
-
-    def clean_last_nsu(self) -> str:
-        try:
-            return normalize_initial_nsu(self.cleaned_data["last_nsu"])
-        except ValueError as error:
-            raise forms.ValidationError(str(error)) from error
 
     def clean_confirmation_tax_identifier(self) -> str:
         value = normalize_tax_identifier(
@@ -337,11 +221,11 @@ class CertificateUploadForm(forms.Form):
     )
 
     def clean_certificate_file(self) -> UploadedFile:
-        certificate_file = self.cleaned_data["certificate_file"]
+        certificate_file = cast(UploadedFile, self.cleaned_data["certificate_file"])
         try:
             validate_certificate_upload_metadata(
-                filename=certificate_file.name,
-                payload_size=certificate_file.size,
+                filename=certificate_file.name or "",
+                payload_size=certificate_file.size or 0,
                 password="valid-for-size-check",
             )
         except CertificateUploadError as error:

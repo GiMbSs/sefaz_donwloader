@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import path
 
-from apps.operations import views
+from apps.operations import download_views, views
 
 urlpatterns = [
     path("", views.DashboardView.as_view(), name="dashboard"),
@@ -45,13 +45,11 @@ urlpatterns = [
     ),
     path(
         "empresas/<int:company_id>/nsu/",
-        views.CompanyNsuCursorView.as_view(),
-        name="company-nsu-cursor",
+        download_views.retired_fiscal_endpoint,
     ),
     path(
         "empresas/<int:company_id>/nsu-inicial/",
-        views.CompanyNsuCursorView.as_view(),
-        name="company-initial-nsu",
+        download_views.retired_fiscal_endpoint,
     ),
     path(
         "empresas/<int:company_id>/certificado/",
@@ -60,18 +58,75 @@ urlpatterns = [
     ),
     path(
         "empresas/<int:company_id>/sincronizar/",
-        views.ManualSyncRequestView.as_view(),
-        name="company-sync",
+        download_views.retired_fiscal_endpoint,
     ),
     path(
         "empresas/<int:company_id>/lotes/<int:batch_id>/reprocessar/",
-        views.DistributionBatchReprocessView.as_view(),
-        name="batch-reprocess",
+        download_views.retired_fiscal_endpoint,
     ),
-    path("documentos/", views.FiscalDocumentListView.as_view(), name="document-list"),
+    path(
+        "empresas/<int:company_id>/downloads/novo/",
+        download_views.DownloadRequestCreateView.as_view(),
+        name="company-download-create",
+    ),
+    path(
+        "empresas/<int:company_id>/downloads/",
+        download_views.DownloadRequestListView.as_view(),
+        name="company-download-list",
+    ),
+    path(
+        "downloads/",
+        download_views.DownloadRequestListView.as_view(),
+        name="download-request-list",
+    ),
+    path(
+        "downloads/<uuid:request_id>/",
+        download_views.DownloadRequestDetailView.as_view(),
+        name="download-request-detail",
+    ),
+    path(
+        "downloads/<uuid:request_id>/retomar/",
+        download_views.DownloadRequestRecoverView.as_view(),
+        name="download-request-recover",
+    ),
+    path(
+        "downloads/arquivos/<uuid:archive_id>/",
+        download_views.DownloadArchiveView.as_view(),
+        name="download-archive",
+    ),
+    path(
+        "downloads/arquivos/<uuid:archive_id>/revalidar/",
+        download_views.DownloadArchiveRevalidateView.as_view(),
+        name="download-archive-revalidate",
+    ),
+    path(
+        "downloads/partes/<uuid:part_id>/conferir/",
+        download_views.RemoteResultResolutionView.as_view(),
+        name="download-result-resolve",
+    ),
+    path(
+        "documentos/",
+        download_views.InvoiceDocumentListView.as_view(),
+        name="document-list",
+    ),
+    path(
+        "notas/<int:document_id>/xml/",
+        download_views.InvoiceXmlDownloadView.as_view(),
+        name="invoice-xml-download",
+    ),
+    path(
+        "eventos/<int:event_id>/xml/",
+        download_views.EventXmlDownloadView.as_view(),
+        name="event-xml-download",
+    ),
+    path(
+        "relatorios/<int:member_id>/txt/",
+        download_views.ArchiveMemberDownloadView.as_view(),
+        name="archive-member-download",
+    ),
     path(
         "documentos/<int:document_id>/xml/",
-        views.FiscalDocumentDownloadView.as_view(),
+        download_views.retired_fiscal_endpoint,
         name="document-download",
     ),
     path("alertas/", views.OperationAlertListView.as_view(), name="alert-list"),

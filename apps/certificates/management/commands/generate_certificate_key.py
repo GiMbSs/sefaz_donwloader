@@ -1,6 +1,7 @@
 import base64
 import os
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -9,11 +10,13 @@ from django.core.management.base import BaseCommand, CommandError
 class Command(BaseCommand):
     help = "Generate the 32-byte private key used by the certificate vault."
 
-    def add_arguments(self, parser):  # type: ignore[no-untyped-def]
-        parser.add_argument("--path", type=Path, default=settings.CERTIFICATE_ENCRYPTION_KEY_FILE)
+    def add_arguments(self, parser: Any) -> Any:
+        parser.add_argument(
+            "--path", type=Path, default=settings.CERTIFICATE_ENCRYPTION_KEY_FILE
+        )
         parser.add_argument("--if-missing", action="store_true")
 
-    def handle(self, *args, **options):  # type: ignore[no-untyped-def]
+    def handle(self, *args: Any, **options: Any) -> Any:
         path: Path = options["path"]
         if path.exists():
             if options["if_missing"]:
@@ -25,4 +28,6 @@ class Command(BaseCommand):
         with os.fdopen(descriptor, "wb") as key_file:
             key_file.write(base64.urlsafe_b64encode(os.urandom(32)))
             key_file.write(b"\n")
-        self.stdout.write(self.style.SUCCESS(f"Certificate vault key created at {path}"))
+        self.stdout.write(
+            self.style.SUCCESS(f"Certificate vault key created at {path}")
+        )

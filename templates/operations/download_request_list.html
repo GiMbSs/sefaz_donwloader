@@ -1,0 +1,20 @@
+{% extends 'operations/base.html' %}
+{% load download_ui %}
+{% block page_title %}Pedidos de download{% if company %} · {{ company.legal_name }}{% endif %}{% endblock %}
+{% block content %}
+{% if company %}<p><a href="{% url 'company-detail' company.pk %}">Voltar à empresa</a> · CNPJ {{ company.tax_identifier }}</p>{% endif %}
+<form class="filter-bar" method="get"><div class="filter-field filter-wide"><label for="id_q">Empresa ou CNPJ</label><input type="search" id="id_q" name="q" value="{{ query }}"></div><button type="submit" class="button button-secondary">Filtrar</button></form>
+{% if downloads %}
+<div class="table-wrap primary-table"><table>
+<thead><tr><th>Empresa</th><th>Solicitado</th><th>Origem e usuário</th><th>Período</th><th>Documento</th><th>Formatos</th><th>Situação</th><th>Próxima tentativa</th><th>Ação</th></tr></thead>
+<tbody>{% for item in downloads %}<tr>
+<td>{{ item.company.legal_name }}</td><td>{{ item.created_at|date:'d/m/Y H:i' }}</td>
+<td>{% if item.trigger == 'manual' %}Manual · {{ item.requested_by.email|default:'Usuário removido' }}{% else %}Automático{% endif %}</td>
+<td>{{ item.start_date|date:'d/m/Y' }} a {{ item.end_date|date:'d/m/Y' }}</td><td>{{ item.get_document_model_display }}</td><td>{{ item.formats|join:', '|upper }}</td>
+<td><span class="status status-{{ item.status }}">{{ item.status|download_status }}</span></td>
+<td>{% for part in item.parts.all %}{% if part.next_poll_at %}<div>{{ part.format|upper }} · {{ part.next_poll_at|date:'d/m/Y H:i' }}</div>{% endif %}{% endfor %}</td>
+<td><a href="{% url 'download-request-detail' item.pk %}">Ver pedido</a></td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty-state"><h2>Nenhum pedido encontrado</h2><p>Escolha uma empresa para solicitar arquivos ou configurar o agendamento automático.</p><a class="button button-primary" href="{% url 'company-list' %}">Ver empresas</a></div>{% endif %}
+{% if is_paginated %}<nav class="pagination" aria-label="Paginação">{% if page_obj.has_previous %}<a href="?q={{ query|urlencode }}&page={{ page_obj.previous_page_number }}">Anterior</a>{% endif %}<span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a href="?q={{ query|urlencode }}&page={{ page_obj.next_page_number }}">Próxima</a>{% endif %}</nav>{% endif %}
+{% endblock %}

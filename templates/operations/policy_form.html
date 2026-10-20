@@ -1,23 +1,4 @@
 {% extends 'operations/base.html' %}
-
-{% block title %}Política de sincronização · SEFAZ Downloader{% endblock %}
-{% block page_title %}Política de sincronização{% endblock %}
-
-{% block content %}
-  <section class="form-panel">
-    <p class="lede">{{ company.legal_name }}</p>
-    <p class="muted">A política controla quando a fila pode solicitar a distribuição. Administradores podem autorizar a correção automática do NSU; a opção começa desativada e cada ajuste é auditado.</p>
-    <aside class="risk-note">
-      <strong>Execução automática silenciosa</strong>
-      <span>Quando a política estiver ativa, o agendador coloca a consulta na fila no horário definido, sem intervenção na tela. A consulta externa só ocorre se o ambiente da empresa estiver explicitamente liberado na infraestrutura.</span>
-    </aside>
-    <form method="post" class="form-grid" novalidate>
-      {% csrf_token %}
-      {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
-      {% for field in form %}
-        {% include "operations/form_field.html" with field=field %}
-      {% endfor %}
-      <div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Salvar política</button></div>
-    </form>
-  </section>
-{% endblock %}
+{% block title %}Agendamento · SEFAZ Downloader{% endblock %}
+{% block page_title %}Agendamento de downloads{% endblock %}
+{% block content %}<section class="form-panel"><p class="lede">{{ company.legal_name }}</p><p class="muted">Mantenha os downloads automáticos no horário e nos dias escolhidos. O período e os formatos determinam quais arquivos serão solicitados à SEFAZ-PB.</p><form method="post" class="form-grid" novalidate>{% csrf_token %}{% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}{% for field in form %}{% include 'operations/form_field.html' with field=field %}{% endfor %}<div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Salvar agendamento</button></div></form></section>{% endblock %}

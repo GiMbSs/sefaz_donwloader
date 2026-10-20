@@ -4,7 +4,7 @@ from django.contrib.auth.models import Permission
 from django.test import RequestFactory
 
 from apps.accounts.models import User
-from apps.fiscal.models import NsuControl, SyncRequest
+from apps.fiscal.models import DownloadPolicy, DownloadRequest
 from apps.operations.models import AuditLog
 from apps.organizations.models import AccountingOffice, ClientCompany, OfficeMembership
 
@@ -39,7 +39,7 @@ def test_admin_company_scope_and_foreign_key_choices_are_tenant_scoped():
     assert list(choices.queryset) == [office]
     assert not model_admin.has_delete_permission(request, visible)
     for company in [visible, hidden]:
-        NsuControl.objects.create(company=company, environment="production")
+        DownloadPolicy.objects.create(company=company)
         AuditLog.objects.create(
             action="test", target=f"organizations.client_company:{company.pk}"
         )
@@ -48,11 +48,11 @@ def test_admin_company_scope_and_foreign_key_choices_are_tenant_scoped():
             target="fiscal.sync_request:1",
             payload={"company_id": company.pk},
         )
-    assert admin.site._registry[NsuControl].get_queryset(request).count() == 1
+    assert admin.site._registry[DownloadPolicy].get_queryset(request).count() == 1
     assert admin.site._registry[AuditLog].get_queryset(request).count() == 2
     assert not admin.site._registry[AuditLog].has_delete_permission(request)
-    assert not admin.site._registry[SyncRequest].has_add_permission(request)
-    assert not admin.site._registry[SyncRequest].has_change_permission(request)
+    assert not admin.site._registry[DownloadRequest].has_add_permission(request)
+    assert not admin.site._registry[DownloadRequest].has_change_permission(request)
     assert not admin.site._registry[User].has_change_permission(request)
 
 

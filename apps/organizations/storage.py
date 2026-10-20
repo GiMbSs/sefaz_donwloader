@@ -21,8 +21,4 @@ def company_storage_directory(company: ClientCompany) -> Path:
     """
     office_cnpj = normalize_tax_identifier(company.office.tax_identifier)
     company_cnpj = normalize_tax_identifier(company.tax_identifier)
-    return (
-        Path("escritorios")
-        / f"escritorio_{office_cnpj}"
-        / f"empresa_{company_cnpj}"
-    )
+    return Path("escritorios") / f"escritorio_{office_cnpj}" / f"empresa_{company_cnpj}"

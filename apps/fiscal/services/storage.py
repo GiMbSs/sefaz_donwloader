@@ -10,10 +10,8 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
-from apps.organizations.storage import company_storage_directory
-
 if TYPE_CHECKING:
-    from apps.organizations.models import ClientCompany
+    pass
 
 
 class FiscalStorageError(Exception):
@@ -29,94 +27,6 @@ class FiscalStorage:
         if self.root.resolve() not in target.parents:
             raise FiscalStorageError("Storage path escaped the notes root.")
         return target
-
-    def write_response(
-        self,
-        company_id: int | None,
-        response: bytes,
-        *,
-        company: ClientCompany | None = None,
-        category: str = "distribution",
-        environment: str = "",
-    ) -> str:
-        if category not in {"distribution", "soap"}:
-            raise FiscalStorageError("Response storage category is not supported.")
-        company_root = self._company_directory(company=company, company_id=company_id)
-        if environment:
-            if environment not in {"production", "homologation"}:
-                raise FiscalStorageError("Invalid fiscal environment.")
-            company_root /= environment
-        directory = "lotes" if category == "distribution" else "soap"
-        relative_path = company_root / directory / f"{category}-{uuid.uuid4()}.xml"
-        self._write(relative_path, response)
-        return str(relative_path)
-
-    def write_document(
-        self,
-        *,
-        company_id: int | None,
-        company: ClientCompany | None = None,
-        model: str,
-        access_key: str,
-        kind: str,
-        discriminator: str = "",
-        issued_year: int = 0,
-        issued_month: int = 0,
-        payload: bytes,
-        versioned: bool = False,
-        environment: str = "",
-    ) -> str:
-        if (
-            not access_key.isascii()
-            or not access_key.isalnum()
-            or len(access_key) != 44
-        ):
-            raise FiscalStorageError(
-                "Access key must have 44 uppercase alphanumeric characters."
-            )
-        if not model.isdecimal() or len(model) != 2:
-            raise FiscalStorageError("Document model must have two digits.")
-        if not 1 <= issued_month <= 12:
-            issued_year, issued_month = 0, 0
-        if kind == "complete":
-            filename = f"{access_key}.xml"
-        elif kind == "summary":
-            filename = f"{access_key}.summary.xml"
-        elif kind in {"event", "unknown"} and discriminator:
-            filename = f"{access_key}.{kind}.{discriminator}.xml"
-        else:
-            raise FiscalStorageError(
-                "Document kind requires a safe filename discriminator."
-            )
-        if versioned:
-            filename = f"{Path(filename).stem}.{uuid.uuid4().hex}.xml"
-        company_root = self._company_directory(company=company, company_id=company_id)
-        if environment:
-            if environment not in {"production", "homologation"}:
-                raise FiscalStorageError("Invalid fiscal environment.")
-            company_root /= environment
-        relative_path = (
-            company_root
-            / "xmls"
-            / f"{issued_year:04d}"
-            / f"{issued_month:02d}"
-            / model
-            / filename
-        )
-        self._write(relative_path, payload)
-        return str(relative_path)
-
-    def _company_directory(
-        self,
-        *,
-        company: ClientCompany | None,
-        company_id: int | None,
-    ) -> Path:
-        if company is not None:
-            return company_storage_directory(company)
-        if company_id is None:
-            raise FiscalStorageError("A company is required for fiscal storage.")
-        return Path(str(company_id))
 
     def delete(self, relative_path: str) -> None:
         """Delete a file created during a failed database transaction."""

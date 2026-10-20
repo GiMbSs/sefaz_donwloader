@@ -1,16 +1,18 @@
+from typing import Any
+
 from django.contrib import admin
 from django.db.models import CharField, Q, Value
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Concat
 
 from apps.organizations.access import manageable_companies, manageable_offices
-from apps.organizations.admin_access import ReadOnlyOfficeAdmin
+from apps.organizations.admin_access import ModelAdminBase, ReadOnlyOfficeAdmin
 
 from .models import AuditLog, OperationAlert
 
 
 @admin.register(AuditLog)
-class AuditLogAdmin(admin.ModelAdmin):
+class AuditLogAdmin(ModelAdminBase):
     list_display = ("created_at", "action", "target", "actor", "correlation_id")
     list_filter = ("action",)
     search_fields = ("target", "action")
@@ -23,16 +25,16 @@ class AuditLogAdmin(admin.ModelAdmin):
         "created_at",
     )
 
-    def has_add_permission(self, request):  # type: ignore[no-untyped-def]
+    def has_add_permission(self, request: Any) -> Any:
         return False
 
-    def has_change_permission(self, request, obj=None):  # type: ignore[no-untyped-def]
+    def has_change_permission(self, request: Any, obj: Any = None) -> Any:
         return False
 
-    def has_delete_permission(self, request, obj=None):
+    def has_delete_permission(self, request: Any, obj: Any = None) -> Any:
         return False
 
-    def get_queryset(self, request):
+    def get_queryset(self, request: Any) -> Any:
         queryset = super().get_queryset(request)
         if request.user.is_superuser:
             return queryset

@@ -10,7 +10,6 @@ from django.test import override_settings
 
 from apps.certificates.services.upload_envelope import generate_upload_keypair
 
-
 SCHEMA_ROOT = Path(__file__).resolve().parents[1] / "vendor" / "sefaz-schemas"
 
 
@@ -44,7 +43,7 @@ def test_worker_preflight_checks_local_dependencies_without_retaining_probe(
     configured = _preflight_settings(tmp_path)
     output = StringIO()
 
-    with override_settings(FISCAL_SCHEMA_ROOT=SCHEMA_ROOT, **configured):
+    with override_settings(**configured):
         call_command(
             "verify_fiscal_installation",
             "--worker",
@@ -57,19 +56,12 @@ def test_worker_preflight_checks_local_dependencies_without_retaining_probe(
 
 
 @pytest.mark.django_db
-def test_preflight_rejects_a_schema_manifest_with_an_invalid_checksum(
-    tmp_path: Path,
-) -> None:
+def test_preflight_rejects_lease_shorter_than_http_timeout(tmp_path):
     configured = _preflight_settings(tmp_path)
-    schema_root = tmp_path / "schemas"
-    schema_directory = schema_root / "distribuicao"
-    schema_directory.mkdir(parents=True)
-    (schema_directory / "test.xsd").write_text("schema", encoding="utf-8")
-    (schema_root / "SHA256SUMS").write_text(
-        f"{'0' * 64}  distribuicao/test.xsd\n",
-        encoding="utf-8",
-    )
-
-    with override_settings(FISCAL_SCHEMA_ROOT=schema_root, **configured):
+    with override_settings(
+        ATF_READ_TIMEOUT_SECONDS=600, ATF_ACCESS_LEASE_SECONDS=300, **configured
+    ):
         with pytest.raises(CommandError):
-            call_command("verify_fiscal_installation", stdout=StringIO())
+            call_command(
+                "verify_fiscal_installation", stdout=StringIO(), stderr=StringIO()
+            )

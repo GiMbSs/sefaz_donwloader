@@ -1,4 +1,5 @@
-from django.core.exceptions import ValidationError
+from typing import Any
+
 from django.db import models
 
 from .validators import normalize_tax_identifier, validate_tax_identifier
@@ -23,7 +24,7 @@ class AccountingOffice(models.Model):
     def __str__(self) -> str:
         return self.legal_name
 
-    def clean_fields(self, exclude=None) -> None:
+    def clean_fields(self, exclude: Any = None) -> None:
         if isinstance(self.tax_identifier, str):
             self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
         super().clean_fields(exclude=exclude)
@@ -83,10 +84,6 @@ class ClientCompany(models.Model):
         INACTIVE = "inactive", "Inativa"
         ARCHIVED = "archived", "Arquivada"
 
-    class FiscalEnvironment(models.TextChoices):
-        PRODUCTION = "production", "Produção"
-        HOMOLOGATION = "homologation", "Homologação"
-
     office = models.ForeignKey(
         AccountingOffice,
         on_delete=models.PROTECT,
@@ -104,12 +101,6 @@ class ClientCompany(models.Model):
         blank=True,
     )
     state = models.CharField("UF", max_length=2, default="PB")
-    fiscal_environment = models.CharField(
-        "ambiente fiscal",
-        max_length=16,
-        choices=FiscalEnvironment,
-        default=FiscalEnvironment.HOMOLOGATION,
-    )
     status = models.CharField(
         "situação",
         max_length=16,
@@ -138,7 +129,7 @@ class ClientCompany(models.Model):
     def __str__(self) -> str:
         return f"{self.legal_name} ({self.tax_identifier})"
 
-    def clean_fields(self, exclude=None) -> None:
+    def clean_fields(self, exclude: Any = None) -> None:
         if isinstance(self.tax_identifier, str):
             self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
         super().clean_fields(exclude=exclude)
@@ -148,25 +139,3 @@ class ClientCompany(models.Model):
         self.tax_identifier = normalize_tax_identifier(self.tax_identifier)
         if self.pk is None:
             return
-        previous_environment = (
-            type(self)
-            .objects.filter(pk=self.pk)
-            .values_list("fiscal_environment", flat=True)
-            .first()
-        )
-        if (
-            previous_environment
-            and previous_environment != self.fiscal_environment
-            and (
-                self.nsu_controls.exists()
-                or self.sync_requests.exists()
-            )
-        ):
-            raise ValidationError(
-                {
-                    "fiscal_environment": (
-                        "O ambiente não pode ser alterado após iniciar o histórico "
-                        "fiscal. Cadastre uma empresa de teste separada."
-                    )
-                }
-            )

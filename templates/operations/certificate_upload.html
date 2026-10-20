@@ -7,7 +7,7 @@
   <section class="form-panel certificate-form-panel">
     <p class="lede">{{ company.legal_name }}</p>
     <p class="muted">CNPJ {{ company.tax_identifier }} · o certificado será associado somente a esta empresa.</p>
-    <div class="security-note"><strong>Processamento protegido.</strong><span>O arquivo e a senha são cifrados no envio. Após a validação, o banco retém somente o hash da senha; os arquivos cifrados ficam na pasta privada desta empresa, acessível exclusivamente ao worker.</span></div>
+    <div class="security-note"><strong>Processamento protegido.</strong><span>O arquivo e a senha são cifrados no envio. O certificado fica na pasta privada da empresa, com acesso restrito aos serviços autorizados.</span></div>
     {% if latest_upload and latest_upload.status != 'completed' %}
       <div class="upload-state"><span class="status status-{{ latest_upload.status }}">{{ latest_upload.get_status_display }}</span><p>{{ latest_upload.error_message|default:'Existe um envio recente; aguarde o resultado antes de enviar novamente.' }}</p></div>
     {% endif %}

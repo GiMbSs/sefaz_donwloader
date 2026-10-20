@@ -139,3 +139,6 @@ Antes do corte, rollback é voltar ao código antigo com backup intacto e chamad
 Não entram outras UFs/portais, A3, certificado do contador, manifestação fiscal, emissão ou cancelamento de notas, interpretação contábil completa do TXT, notificações externas ou exclusão automática de históricos. A implementação pode escolher funções auxiliares e apresentação consistente com o design existente, mas não substituir os contratos de sessão, retenção, isolamento e migração definidos aqui.
 
 Confirmar em smoke posteriores o significado exato das mensagens sem anexo, paginação, dados de identidade da conta remota e códigos de erro do portal. Até haver evidência, ausência de anexo isolada é pendência ou falha de processamento, não prova de período vazio; conteúdo ambíguo não libera arquivo nem provoca reenvio automático.
+# Revisão de escopo — 20/10/2026
+
+Prevalecem as diretrizes da revisão de 20/10/2026 no plano de implementação: legado fiscal sem exigência de preservação, extração e exibição de número da nota no XML, estrutura por CNPJ/formato/data da solicitação, tolerância à lentidão e reagendamento automático após tentativas esgotadas para tarefas programadas, histórico por empresa com usuário manual e datas inicial/final obrigatórias. Cadastros, certificados, isolamento por escritório e agendamento programável permanecem.

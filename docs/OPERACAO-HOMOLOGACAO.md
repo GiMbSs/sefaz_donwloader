@@ -1,3 +1,5 @@
+> Documento histórico do modelo anterior, substituído pelo plano ATF-PB revisado em 20/10/2026 e por `docs/OPERACAO-ATF-PB.md`. Não usar instruções de NSU, SOAP ou homologação para a operação atual.
+
 # Operação e homologação controlada
 
 Este procedimento prepara uma instalação local para validar NF-e modelo 55 no

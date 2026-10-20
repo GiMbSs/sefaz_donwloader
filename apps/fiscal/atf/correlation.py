@@ -1,0 +1,56 @@
+from .profiles import document_profile
+from .types import CorrelationResult, ParsedMessage, Period, SubmissionEvidence
+
+
+def reconcile_result(
+    evidence: SubmissionEvidence,
+    messages: tuple[ParsedMessage, ...],
+    *,
+    period: Period,
+    document_model: str = "55",
+) -> CorrelationResult:
+    groups: dict[str, set[str]] = {}
+    processing_groups: set[str] = set()
+    sender = document_profile(document_model).sender_code
+    baseline = set(evidence.baseline_ids)
+    for message in messages:
+        group = message.ref.parent_id or message.ref.id
+        if (
+            group not in baseline
+            and message.ref.sender_code == sender
+            and (
+                (message.outcome == "pending" and message.period == period)
+                or (
+                    message.filters.get("processing") == "true"
+                    and message.period in {None, period}
+                )
+            )
+        ):
+            processing_groups.add(group)
+        if (
+            group in baseline
+            or message.ref.sender_code != sender
+            or message.period != period
+        ):
+            continue
+        groups.setdefault(group, set()).add(message.outcome)
+    candidates = tuple(sorted(groups))
+    if len(candidates) > 1:
+        return CorrelationResult("ambiguous", candidates, period)
+    if not candidates:
+        return CorrelationResult("pending")
+    if candidates[0] in processing_groups:
+        return CorrelationResult("pending", candidates, period)
+    outcomes = groups[candidates[0]]
+    if len(outcomes) > 1:
+        outcomes.discard("pending")
+    if len(outcomes) > 1:
+        return CorrelationResult("ambiguous", candidates, period)
+    outcome = next(iter(outcomes))
+    if outcome == "success":
+        return CorrelationResult("matched", candidates, period)
+    if outcome == "empty":
+        return CorrelationResult("empty", candidates, period)
+    if outcome == "remote_failed":
+        return CorrelationResult("remote_failed", candidates, period)
+    return CorrelationResult("pending", candidates, period)

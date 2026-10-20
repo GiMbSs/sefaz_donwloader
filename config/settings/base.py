@@ -150,22 +150,34 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
 
 FISCAL_NOTES_ROOT = Path(os.environ.get("NOTES_STORAGE_ROOT", "/dados/notas"))
-FISCAL_SCHEMA_ROOT = Path(
-    os.environ.get("FISCAL_SCHEMA_ROOT", BASE_DIR / "vendor" / "sefaz-schemas")
+# Only the observed SEFAZ-PB ATF endpoint is supported.
+ATF_PB_ENABLED = os.environ.get("ATF_PB_ENABLED", "False").lower() in {
+    "true",
+    "1",
+    "yes",
+}
+ATF_PB_BASE_URL = "https://www4.sefaz.pb.gov.br"
+ATF_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("ATF_CONNECT_TIMEOUT_SECONDS", "10"))
+ATF_READ_TIMEOUT_SECONDS = float(os.environ.get("ATF_READ_TIMEOUT_SECONDS", "120"))
+ATF_TLS_CA_BUNDLE = os.environ.get("ATF_TLS_CA_BUNDLE", "")
+ATF_POLL_INTERVAL_SECONDS = int(os.environ.get("ATF_POLL_INTERVAL_SECONDS", "60"))
+ATF_ACCESS_LEASE_SECONDS = int(os.environ.get("ATF_ACCESS_LEASE_SECONDS", "300"))
+ATF_WAIT_TIMEOUT_SECONDS = int(os.environ.get("ATF_WAIT_TIMEOUT_SECONDS", "86400"))
+ATF_NFCE_WAIT_TIMEOUT_SECONDS = int(
+    os.environ.get("ATF_NFCE_WAIT_TIMEOUT_SECONDS", "604800")
 )
-SEFAZ_CONNECT_TIMEOUT_SECONDS = float(
-    os.environ.get("SEFAZ_CONNECT_TIMEOUT_SECONDS", "10")
+ATF_NFCE_MAX_POLL_INTERVAL_SECONDS = int(
+    os.environ.get("ATF_NFCE_MAX_POLL_INTERVAL_SECONDS", "900")
 )
-SEFAZ_READ_TIMEOUT_SECONDS = float(os.environ.get("SEFAZ_READ_TIMEOUT_SECONDS", "60"))
-SEFAZ_MAX_RESPONSE_BYTES = int(
-    os.environ.get("SEFAZ_MAX_RESPONSE_BYTES", str(10 * 1024 * 1024))
+ATF_RETRY_CYCLE_SECONDS = int(os.environ.get("ATF_RETRY_CYCLE_SECONDS", "1800"))
+ATF_MAX_HTML_BYTES = int(os.environ.get("ATF_MAX_HTML_BYTES", str(10 * 1024 * 1024)))
+ATF_MAX_ZIP_BYTES = int(os.environ.get("ATF_MAX_ZIP_BYTES", str(200 * 1024 * 1024)))
+ATF_MAX_UNCOMPRESSED_BYTES = int(
+    os.environ.get("ATF_MAX_UNCOMPRESSED_BYTES", str(1024 * 1024 * 1024))
 )
-SEFAZ_TLS_CA_BUNDLE = os.environ.get("SEFAZ_TLS_CA_BUNDLE", "")
-SEFAZ_ENABLED_ENVIRONMENTS = frozenset(
-    environment.strip()
-    for environment in os.environ.get("SEFAZ_ENABLED_ENVIRONMENTS", "").split(",")
-    if environment.strip()
-)
+ATF_MAX_ZIP_ENTRIES = int(os.environ.get("ATF_MAX_ZIP_ENTRIES", "50000"))
+ATF_MAX_XML_BYTES = int(os.environ.get("ATF_MAX_XML_BYTES", str(10 * 1024 * 1024)))
+ATF_MAX_TXT_BYTES = int(os.environ.get("ATF_MAX_TXT_BYTES", str(100 * 1024 * 1024)))
 CERTIFICATE_VAULT_ROOT = Path(
     os.environ.get("CERTIFICATE_STORAGE_ROOT", "/dados/certificados")
 )
@@ -201,8 +213,8 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULE = {
-    "queue-due-fiscal-synchronizations": {
-        "task": "apps.fiscal.tasks.schedule_eligible_synchronizations",
+    "queue-due-atf-downloads": {
+        "task": "apps.fiscal.tasks.schedule_due_downloads",
         "schedule": 300.0,
     },
     "expire-staged-certificate-uploads": {

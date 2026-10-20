@@ -1,3 +1,5 @@
+> Documento histórico do modelo anterior, substituído pelo plano ATF-PB revisado em 20/10/2026 e por `docs/OPERACAO-ATF-PB.md`. Não usar instruções de NSU, SOAP ou homologação para a operação atual.
+
 # PRD e plano de implementação — Downloader DF-e para contabilidade
 
 ## 1. Visão do produto

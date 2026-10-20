@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -12,7 +13,7 @@ from apps.certificates.services.upload_envelope import (
 class Command(BaseCommand):
     help = "Generate the worker-only X25519 keypair for certificate uploads."
 
-    def add_arguments(self, parser):  # type: ignore[no-untyped-def]
+    def add_arguments(self, parser: Any) -> Any:
         parser.add_argument(
             "--private-path",
             type=Path,
@@ -25,7 +26,7 @@ class Command(BaseCommand):
         )
         parser.add_argument("--if-missing", action="store_true")
 
-    def handle(self, *args, **options):  # type: ignore[no-untyped-def]
+    def handle(self, *args: Any, **options: Any) -> Any:
         try:
             created = generate_upload_keypair(
                 private_key_file=options["private_path"],

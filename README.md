@@ -1,403 +1,59 @@
-# SEFAZ Downloader
+# SEFAZ Downloader — SEFAZ-PB
 
-Estação de trabalho web para escritórios de contabilidade organizarem a coleta
-de DF-e de empresas clientes com rastreabilidade. A primeira implantação usa a
-distribuição nacional de NF-e (modelo 55); NFC-e e documentos de saída exigem
-validação operacional específica antes de serem anunciados como cobertos.
+Estação de trabalho local para escritórios contábeis baixarem XML e TXT de NF-e (55) e NFC-e (65) emitidas, por empresa. O certificado A1 individual autentica o acesso ao ATF da SEFAZ-PB; relatórios chegam pela caixa de mensagens em arquivos ZIP.
 
-O sistema não emite notas, não manifesta documentos automaticamente e não
-automatiza portais, CAPTCHA ou navegação humana da SEFAZ.
+Pedidos manuais escolhem o modelo e o período. Políticas automáticas podem coletar ambos os modelos. NFC-e usa partes diárias e espera persistente de até sete dias, configurável; veja [operação NFC-e](docs/IMPLEMENTACAO-NFCE-PB.md).
 
-## O que o sistema faz
+## Operação
 
-- Cadastra, edita, inativa e arquiva empresas clientes por escritório.
-- Marca cada empresa como **Homologação** ou **Produção**.
-- Recebe certificado A1 (`.pfx`/`.p12`) e senha durante o cadastro ou em uma
-  substituição posterior.
-- Agenda sincronizações silenciosas por empresa, com recorrência diária,
-  semanal ou mensal.
-- Cria pedidos manuais idempotentes e executa a comunicação fiscal somente no
-  worker assíncrono.
-- Arquiva SOAP, lotes e XMLs originais e permite baixar XMLs a usuários
-  autorizados.
-- Registra auditoria e alertas para bloqueios, falhas e certificados
-  indisponíveis.
+- Cadastros e permissões separados por escritório, com administradores e operadores.
+- Pedidos manuais com data inicial, data final e formatos XML/TXT.
+- Downloads automáticos programáveis por horário, fuso e frequência diária, semanal ou mensal; períodos explícitos e recuperação de ocorrências perdidas durante indisponibilidade.
+- Histórico completo de pedidos por empresa, origem manual/automática, usuário solicitante, situação e próxima tentativa.
+- Leitura segura do XML, identificação da nota pelo número e chave, separação de eventos e preservação dos ZIPs e TXT originais.
+- Arquivos em `escritorios/escritorio_<CNPJ>/empresas/<CNPJ>/XML|TXT/AAAA/MM/DD/<pedido>/<parte>/`, usando a data da solicitação original.
+- Timeouts configuráveis, tentativas curtas e reagendamento automático prolongado para falhas transitórias de pedidos agendados. Envios incertos são conciliados antes de qualquer nova submissão.
 
-## Limites fiscais importantes
+A integração nacional SOAP, o controle de NSU e a seleção de ambiente fiscal foram retirados. Dados fiscais gerados pelo motor antigo podem ser descartados pelas migrations; cadastros, usuários, certificados e configurações programáveis são mantidos.
 
-- O fluxo usa `NFeDistribuicaoDFe` e `ultNSU`. Ele não prova cobertura de
-  documentos emitidos pela própria empresa cliente.
-- A resposta `cStat=137` e bloqueios `cStat=656` impõem uma espera mínima de
-  uma hora. O cursor só pode ser corrigido por administrador, em fluxo
-  auditado, e essa correção nunca reduz a janela de espera.
-- Produção só deve ser habilitada após homologação controlada, validação do
-  certificado e aprovação operacional registrada.
-- Arquivar uma empresa não apaga XMLs, lotes, certificado cifrado nem auditoria.
-  A preservação fiscal continua obrigatória.
+## Stack
 
-## Arquitetura operacional
-
-```text
-Navegador -> Django web -> PostgreSQL
-                         -> Redis <- scheduler (Celery Beat)
-                                        |
-                                      worker fiscal -> SEFAZ
-                                           |
-                    cofre privado de certificados + volume de notas
-```
-
-- `web`: autenticação, telas, autorizações, auditoria e download autorizado.
-- `scheduler`: identifica políticas elegíveis a cada cinco minutos.
-- `worker`: abre certificados, consulta a SEFAZ, processa XML e grava arquivos.
-- `postgres` e `redis`: respectivamente, estado transacional/auditoria e fila.
-
-O servidor web não consulta a SEFAZ e não monta o cofre privado de
-certificados.
-
-## Estrutura de arquivos por empresa
-
-Os volumes de documentos e de certificados permanecem separados para que o
-cofre nunca fique disponível via HTTP. Ambos usam a mesma raiz lógica,
-separada por escritório e empresa:
-
-```text
-<volume>/escritorios/escritorio_<cnpj-do-escritorio>/
-  empresa_<cnpj-da-empresa>/
-    certificado/     # apenas no volume privado; PFX e senha cifrados
-    production/       # novos documentos, lotes e SOAP de Produção
-      xmls/           # ano/mes/modelo/chave.versao.xml
-      lotes/
-      soap/
-    homologation/     # mesma estrutura para Homologação
-    xmls/             # caminhos históricos continuam disponíveis
-    lotes/            # lotes históricos preservados
-    soap/             # respostas históricas preservadas
-    txt/              # reservado para relatórios TXT versionados
-```
-
-Exemplo de pasta da empresa: `empresa_00000000000191`. O CNPJ, e não a razão
-social, compõe o nome para que uma edição cadastral não mova ou quebre os
-arquivos. As pastas são criadas de forma atômica quando o worker grava o
-primeiro artefato. O segmento do escritório evita mistura de arquivos caso a
-mesma instalação atenda a mais de uma contabilidade.
-
-Os relatórios TXT de NF-e/NFC-e ainda são uma fase própria: a pasta `txt/` está
-reservada, mas o sistema não promete baixar ou interpretar TXT sem um canal
-oficial e layout confirmado. Consulte
-[o plano de relatórios TXT](docs/PLANO-RELATORIOS-TXT-EMITIDOS.md).
-
-## Certificado e senha
-
-No cadastro da empresa, o certificado A1 e a senha são opcionais; quando ambos
-são informados, são encaminhados cifrados ao worker para validação. Também é
-possível enviar ou substituir o certificado pela tela da empresa.
-
-Após validar o PFX, o sistema:
-
-1. Guarda no banco somente `password_hash`, produzido pelo hasher do Django.
-2. Grava uma cópia cifrada recuperável da senha e o PFX cifrado no cofre
-   privado, pois a automação precisa abrir o PFX sem interação humana.
-3. Mantém a chave mestra fora do banco, do repositório, da imagem Docker e dos
-   logs.
-4. Apaga o envelope temporário de upload após êxito, falha ou expiração.
-
-Um hash sozinho não permite abrir um certificado. Por isso a cópia cifrada
-recuperável fica exclusivamente no cofre do worker; a senha nunca é gravada em
-texto no banco.
-
-## Cadastro e ciclo de vida da empresa
-
-1. No primeiro acesso, entre com o superusuário e abra **Empresas → Cadastrar
-   escritório contábil**. Esse passo cria o tenant e vincula o administrador
-   responsável.
-2. Em seguida, o sistema abre **Cadastrar empresa**. Informe CNPJ, UF, ambiente
-   fiscal e situação.
-   - Para empresa que já tem distribuição em outro sistema, informe o último
-     NSU processado. A próxima consulta continuará após ele; o valor é gravado
-     como ponto de continuidade inicial.
-   - Use **Homologação** para testes controlados.
-   - Use **Produção** apenas para uma empresa autorizada e infraestrutura já
-     liberada.
-3. Opcionalmente, anexe o A1 e informe a senha no mesmo cadastro.
-4. Abra a empresa e configure a política de sincronização.
-5. Ative a política somente depois de verificar certificado, ambiente e janela
-   operacional.
-
-Quando houver correção operacional, uma pessoa administradora pode usar
-**Corrigir cursor NSU** na página da empresa para definir o último NSU (ou
-NSU inicial de continuidade), inclusive após haver consultas. A tela exige
-confirmação do CNPJ, justificativa e aceite de risco; registra o valor anterior
-e o novo valor na auditoria. Ela não apaga XMLs, lotes ou solicitações, não
-altera o máximo devolvido pela SEFAZ e não pode ser usada enquanto houver uma
-consulta em fila ou em execução. Um bloqueio `cStat=137` ou `656` continua
-válido até `next_allowed_at`.
-
-Situações disponíveis:
-
-- **Ativa**: pode receber pedidos manuais e agendados, desde que a política
-  também esteja ativa.
-- **Inativa**: bloqueia novas sincronizações, mantendo todo o histórico.
-- **Arquivada**: resultado da ação “Excluir (arquivar)”; desativa a política e
-  retira a empresa da operação diária, sem apagar evidências fiscais.
-
-Para arquivar, a interface mostra o aviso de risco, exige a confirmação do
-CNPJ e o aceite de retenção. Essa ação é auditada. Alterar o ambiente depois de
-existirem controles NSU ou pedidos fiscais é bloqueado para não misturar os
-históricos de homologação e produção.
-
-## Política automática de download
-
-Uma empresa ativa pode ter uma política:
-
-| Modo | Comportamento |
-| --- | --- |
-| Automática | Somente o scheduler cria pedidos no horário programado. |
-| Híbrida | Scheduler e pedido manual autorizado. |
-| Manual | Somente pedido manual autorizado. |
-
-A recorrência automática pode ser:
-
-- **Diária**: uma vez por dia no horário e fuso configurados.
-- **Semanal**: nos dias da semana selecionados.
-- **Mensal**: no dia definido. Se o dia não existir no mês, executa no último
-  dia daquele mês.
-
-O scheduler roda silenciosamente em processo próprio e somente enfileira o
-pedido. O worker ainda verifica situação da empresa, política, bloqueios NSU,
-certificado e se o ambiente foi explicitamente liberado antes de qualquer rede
-com a SEFAZ. Não há chamada fiscal dentro da requisição HTTP.
-
-## Desenvolvimento local com SQLite
-
-Use SQLite apenas para desenvolvimento. No PowerShell, defina a variável na
-mesma sessão antes dos comandos Django:
-
-```powershell
-$env:DEV_MODE = "True"
-python manage.py migrate
-python manage.py runserver
-```
-
-No Bash/WSL:
-
-```bash
-export DEV_MODE=True
-.venv/bin/python manage.py migrate
-.venv/bin/python manage.py runserver
-```
-
-Isso cria `dev.sqlite3` (ignorado pelo Git) e usa por padrão a pasta privada
-`.sefaz_downloader` no perfil do usuário para notas, chaves e cofre local. O
-`.env` é lido pelos comandos diretos, e as variáveis do terminal ainda têm
-prioridade. Defina `DEV_STORAGE_ROOT` se precisar de outro local privado.
-`DEV_MODE` não libera tráfego fiscal por si só. Para uma homologação controlada,
-configure explicitamente `SEFAZ_ENABLED_ENVIRONMENTS=homologation`; não inclua
-`production` nessa variável.
-
-Antes do primeiro envio de certificado A1 no ambiente local, gere as chaves uma
-única vez:
-
-```bash
-.venv/bin/python manage.py generate_certificate_key --if-missing
-.venv/bin/python manage.py generate_certificate_upload_keypair --if-missing
-```
-
-No PowerShell, use `python` ou `.venv\Scripts\python.exe` com os mesmos
-subcomandos. As chaves ficam no diretório privado de desenvolvimento; não as
-copie para o repositório.
-
-Com `DEV_MODE=True`, o processamento do A1 é executado logo após o commit da
-requisição, sem Redis ou worker. Isso serve apenas para validar o fluxo local;
-as solicitações fiscais continuam a ser executadas exclusivamente pelo worker
-e dependem de uma liberação explícita do ambiente.
-
-Para testar uma solicitação fiscal pelo `runserver` local, inicie o Redis do
-Compose e o worker no mesmo ambiente virtual. A porta do Redis é publicada
-somente em `127.0.0.1`:
-
-```powershell
-docker compose up -d redis
-celery -A config worker --loglevel=INFO
-```
-
-Mantenha os dois processos ativos durante a solicitação. O `runserver` usa por
-padrão `redis://127.0.0.1:6379/0`; não altere essa URL para apontar ao nome de
-serviço `redis`, que só é resolvido entre containers.
-
-Falhas do worker são registradas no log como `event=fiscal_sync_failed`, sem
-CNPJ, NSU, certificado, senha, XML ou SOAP. Os campos `failure_domain` e
-`failure_code` informam se a origem é `internal`, `sefaz` ou `network`; neste
-último caso a conexão não permite atribuir a falha com segurança à SEFAZ ou à
-infraestrutura local. Quando a SEFAZ responder HTTP diferente de `200`, o
-evento inclui somente `http_status` (por exemplo, `404`), sem registrar corpo
-ou cabeçalhos da resposta. Em Docker, consulte com `docker compose logs
---tail=200 worker`.
+Python 3.13, Django 6, Celery/Redis, PostgreSQL 17, requests, cryptography e lxml. Interface em português do Brasil. A web não recebe as chaves privadas do cofre; o worker autentica, consulta e grava arquivos privados.
 
 ## Instalação local com Docker
 
-1. Copie `.env.example` para `.env`.
-2. Defina segredos fortes, banco e caminhos absolutos no computador hospedeiro:
-   `NOTES_HOST_DIR`, `CERTIFICATES_HOST_DIR` e
-   `CERTIFICATE_PUBLIC_HOST_DIR`.
-3. Crie esses diretórios com permissões restritas. O diretório de certificados
-   não deve ser compartilhado, sincronizado em nuvem ou incluído em backup sem
-   criptografia.
-4. Suba a instalação:
+Copiar `.env.example` para `.env`, definir credenciais próprias e os diretórios absolutos `NOTES_HOST_DIR`, `CERTIFICATES_HOST_DIR` e `CERTIFICATE_PUBLIC_HOST_DIR`. Certificados e senhas ficam fora do repositório. Não substituir chaves existentes do cofre.
 
-   ```bash
-   docker compose up --build
-   ```
+Antes de atualizar uma instalação existente, seguir a janela de manutenção descrita em [Operação ATF-PB](docs/OPERACAO-ATF-PB.md). A migration fiscal 0013 remove as tabelas antigas; não aplicar enquanto workers do motor anterior ainda estiverem ativos.
 
-5. Verifique a saúde em `http://127.0.0.1:8000/health/`.
-6. Crie o primeiro administrador, se ainda não existir:
-
-   ```bash
-   docker compose exec web python manage.py createsuperuser
-   ```
-
-O serviço `migrations` prepara chaves privadas e aplica migrations antes dos
-serviços dependentes. O web recebe um envelope de upload cifrado, enquanto
-somente o worker possui a chave privada e o cofre.
-
-## Variáveis operacionais principais
-
-| Variável | Uso |
-| --- | --- |
-| `POSTGRES_*`, `DB_HOST`, `DB_PORT` | Banco de produção/container. |
-| `REDIS_URL` | Fila Celery e scheduler. |
-| `NOTES_HOST_DIR` | Diretório host para `xmls`, `lotes`, `soap` e futuro `txt`. |
-| `CERTIFICATES_HOST_DIR` | Cofre privado com PFX e senha cifrados. |
-| `CERTIFICATE_ENCRYPTION_KEY_FILE` | Chave mestra do cofre; nunca versionar. |
-| `SEFAZ_ENABLED_ENVIRONMENTS` | Ambientes que o worker pode consultar. Inicia vazio. |
-| `DEV_MODE=True` | Somente desenvolvimento direto: usa `dev.sqlite3`. |
-
-Para a primeira homologação controlada, configure somente:
-
-```dotenv
-SEFAZ_ENABLED_ENVIRONMENTS=homologation
-```
-
-Reinicie o worker depois da alteração. Não inclua `production` sem a aprovação
-e as evidências descritas em [Operação e homologação](docs/OPERACAO-HOMOLOGACAO.md).
-
-## Verificação antes de habilitar SEFAZ
-
-Execute no worker, antes de qualquer consulta externa:
-
-```bash
+```sh
+docker compose up --build -d
+docker compose exec web python manage.py createsuperuser
 docker compose exec worker python manage.py verify_fiscal_installation --worker --write-notes-probe
 ```
 
-O comando valida migrations, banco, schemas locais, chaves do cofre e escrita
-atômica no volume de notas. A sonda é removida no final e não faz chamada à
-SEFAZ.
+O acesso padrão fica em `http://localhost:8000`. `ATF_PB_ENABLED=False` bloqueia tráfego ATF até a configuração ser conferida. Cadastrar o escritório, a empresa e seu certificado A1; reconciliar vínculos antigos do cofre quando necessário. Após habilitar o ATF, o comando `probe_atf_pb --company-id ID` verifica login e caixa sem criar consulta fiscal.
 
-## Monitoramento e recuperação
+## Desenvolvimento e testes
 
-- A tela da empresa mostra certificado, política, controles NSU, fila, lotes e
-  documentos recentes.
-- A página **Alertas** concentra falhas de transporte, certificado e bloqueios.
-- Lotes com falha local podem ser reprocessados a partir da resposta arquivada;
-  essa operação não consulta a SEFAZ novamente.
-- Em uma falha incerta de rede ou persistência, o sistema conserva uma espera de
-  uma hora antes de nova consulta. Revise o lote e o alerta antes de prosseguir.
-- Caso a contabilidade confirme que o cursor armazenado está incorreto, use
-  **Corrigir cursor NSU** com o valor de continuidade e uma justificativa. Não
-  edite o banco diretamente e não use a ação para contornar a espera da SEFAZ.
-
-### Solicitação interrompida em execução
-
-Uma solicitação que ficou em execução após queda do worker não é repetida
-automaticamente: o envio anterior pode ter chegado à SEFAZ. Após confirmar que
-o pedido foi iniciado há pelo menos uma hora:
-
-1. Pare o scheduler e o worker antigo, garantindo que nenhuma réplica desse
-   worker continua executando o pedido:
-
-   ```bash
-   docker compose stop -t 120 scheduler worker
-   ```
-
-2. Use o ID do pedido, o e-mail de um administrador ativo da empresa e uma
-   justificativa sem credenciais:
-
-   ```bash
-   docker compose exec web python manage.py recover_sync_request --request-id 123 --actor-email admin@example.com --reason "Worker interrompido; lotes revisados" --confirm-worker-stopped
-   ```
-
-   Se já houver lote processado, o pedido é concluído com esse resultado.
-   Caso contrário, ele é encerrado como falha com nova espera mínima de uma
-   hora, sem alterar o NSU nem enviar nova consulta. Lotes recebidos continuam
-   disponíveis para revisão e reprocessamento local.
-
-3. Reinicie os serviços e respeite a próxima consulta permitida:
-
-   ```bash
-   docker compose start worker scheduler
-   ```
-
-O Django Admin respeita o escritório do administrador. Controles fiscais,
-certificados e auditoria são somente leitura; correções operacionais usam
-as telas e serviços auditados. Superusuários mantêm a visão da instalação;
-usuários, grupos e vínculos são administrados somente por superusuários.
-
-### Atualização com separação de documentos por ambiente
-
-Administradores podem habilitar **Corrigir automaticamente o NSU divergente**
-em **Configurar política** de cada empresa. A opção começa desativada. Quando
-uma rejeição 656 por sequência incorreta trouxer um `ultNSU` válido diferente
-do cursor local, o worker alinha o cursor, registra os valores anterior e novo,
-ambiente e lote na auditoria e mantém a solicitação em espera. O scheduler
-retoma a consulta somente após a janela obrigatória da SEFAZ; precisa estar
-em execução. A opção não recupera documentos que ficaram para trás nem elimina
-a necessidade de coordenar outros coletores do mesmo CNPJ. Rejeições por
-frequência, cursor igual ou ausência de cursor válido não geram correção.
-A migration `fiscal.0008_syncpolicy_auto_correct_nsu` adiciona essa opção.
-
-Consultas **agendadas** que recebam rejeição 656 por sequência NSU ficam em
-espera para nova tentativa após uma hora da resposta, independentemente da
-recorrência diária, semanal ou mensal. A liberação ocorre no primeiro ciclo do
-scheduler após a janela fiscal. Com a correção automática habilitada, a tentativa
-usa o cursor corrigido; sem ela, preserva o cursor e o alerta para intervenção
-administrativa. Nesse caso, novas rejeições podem ocorrer até o alinhamento.
-
-A migration `fiscal.0007_document_environment` mantém os caminhos e IDs
-históricos. Documentos vinculados a um único ambiente são classificados; os
-sem evidência ou com vínculos mistos permanecem como legados. Novas gravações
-usam ambiente e arquivo versionado, sem sobrescrever XMLs anteriores.
-Faça backup do banco e dos volumes antes de aplicar a migration. Após existir
-a mesma chave nos dois ambientes, a constraint antiga impede um simples
-rollback da migration; nesse caso, restaure o backup consistente.
-
-Atualize com uma breve parada de todos os processos que escrevem no banco,
-evitando executar o código anterior durante a alteração do schema:
-
-```bash
-docker compose stop -t 120 web scheduler worker
-docker compose up -d --build
+```sh
+python3.13 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+DEV_MODE=True .venv/bin/python manage.py migrate
+DEV_MODE=True .venv/bin/python manage.py runserver
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ruff check apps config tests
+.venv/bin/python -m mypy apps config
 ```
 
-O serviço `migrations` aplica a atualização antes da inicialização da aplicação.
+A suíte padrão usa SQLite descartável e dados sintéticos, sem rede SEFAZ. A concorrência e as migrations também são verificadas com `--ds=config.settings.test_postgres`, apontando `TEST_POSTGRES_*` exclusivamente a uma base descartável cujo nome começa com `test_`.
 
-Faça backup consistente do PostgreSQL e dos dois volumes privados. Restaurar
-somente o banco sem `NOTES_HOST_DIR` ou `CERTIFICATES_HOST_DIR` não recupera os
-arquivos associados. Não elimine XMLs antes da política de retenção fiscal
-aplicável; para a Paraíba, a referência inicial é 132 meses para os DF-e
-abrangidos.
+## Limites e documentação
 
-## Testes e checagens
+A conferência estrutural/identidade do XML não valida assinatura digital nem o XSD completo de NF-e/eventos; o estado de schema pendente fica explícito. Smoke do backend A1/ACL no Windows permanece necessário. Contratos não observados de paginação JavaScript ou confirmação definitiva de resultado vazio exigem ajuste comprovado do portal.
 
-Com o ambiente virtual ativo:
-
-```bash
-DEV_MODE=True .venv/bin/python manage.py check
-DEV_MODE=True .venv/bin/python manage.py makemigrations --check --dry-run
-.venv/bin/ruff check . --no-cache
-DEV_MODE=True .venv/bin/pytest
-```
-
-Em PowerShell, substitua a primeira forma por `$env:DEV_MODE = "True"` e use
-os executáveis em `.venv\Scripts\`.
-
-Consulte também [o PRD](docs/PRD-IMPLEMENTACAO.md) para escopo, regras fiscais
-e fases de evolução.
+- [Guia operacional, configuração, retries e corte](docs/OPERACAO-ATF-PB.md)
+- [Andamento e evidências da implementação](docs/IMPLEMENTACAO-ATF-PB.md)
+- [Plano e revisão de requisitos de 20/10/2026](docs/superpowers/plans/2026-10-19-atf-pb-migration.md)
+- [Validação anterior do login A1](docs/VALIDACAO-AUTENTICACAO-ATF-PB.md)
+- [Validação anterior do download ZIP](docs/VALIDACAO-DOWNLOAD-ATF-PB.md)

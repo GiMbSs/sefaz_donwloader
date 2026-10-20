@@ -16,7 +16,10 @@ def normalize_tax_identifier(value: str) -> str:
 
 
 def _check_digit(characters: str, weights: tuple[int, ...]) -> int:
-    total = sum((ord(character) - 48) * weight for character, weight in zip(characters, weights, strict=True))
+    total = sum(
+        (ord(character) - 48) * weight
+        for character, weight in zip(characters, weights, strict=True)
+    )
     remainder = total % 11
     return 0 if remainder < 2 else 11 - remainder
 
@@ -28,7 +31,8 @@ def validate_tax_identifier(value: str) -> None:
         raise ValidationError("Informe um CNPJ válido com 14 posições.")
 
     first_digit = _check_digit(canonical[:12], (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2))
-    second_digit = _check_digit(canonical[:12] + str(first_digit), (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2))
+    second_digit = _check_digit(
+        canonical[:12] + str(first_digit), (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
+    )
     if canonical[-2:] != f"{first_digit}{second_digit}":
         raise ValidationError("Informe um CNPJ com dígitos verificadores válidos.")
-
