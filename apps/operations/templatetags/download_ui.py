@@ -1,6 +1,10 @@
 from typing import Any
+from uuid import UUID
 
 from django import template
+from django.urls import reverse
+
+from apps.fiscal.atf.diagnostics import error_message
 
 register = template.Library()
 
@@ -25,26 +29,33 @@ def download_status(value: Any) -> Any:
 
 @register.filter
 def download_error(value: Any) -> Any:
+    return error_message(str(value))
+
+
+@register.filter
+def download_part_status(part: Any) -> Any:
+    if (
+        part.status == "ambiguous"
+        and part.error_code == "atf_submission_uncertain"
+        and not part.candidates
+    ):
+        return "Aguardando confirmação do envio"
+    return download_status(part.status)
+
+
+@register.filter
+def download_request_url(value: Any) -> str:
+    try:
+        request_id = UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return ""
+    return str(reverse("download-request-detail", args=[request_id]))
+
+
+@register.filter
+def download_operation(value: Any) -> str:
     return {
-        "atf_identity_mismatch": "O resultado não corresponde à empresa solicitada.",
-        "atf_submission_uncertain": (
-            "O envio não foi confirmado. O sistema verifica a caixa de mensagens "
-            "antes de prosseguir."
-        ),
-        "atf_result_ambiguous": (
-            "Há mais de um resultado possível. Solicite a conferência do administrador."
-        ),
-        "atf_authentication_failed": (
-            "Não foi possível autenticar. Verifique o certificado A1."
-        ),
-        "atf_portal_changed": (
-            "A página da SEFAZ-PB mudou e precisa de ajuste na integração."
-        ),
-        "atf_artifact_rejected": "O arquivo recebido não passou pela conferência.",
-        "atf_wait_timeout": (
-            "A espera pelo resultado terminou. Você pode retomar a verificação."
-        ),
-    }.get(
-        value,
-        "Não foi possível concluir esta etapa. Revise os alertas antes de retomar.",
-    )
+        "connect": "Preparação do acesso e autenticação A1",
+        "submit": "Envio da consulta à SEFAZ-PB",
+        "poll": "Verificação do resultado e dos arquivos",
+    }.get(str(value), "Processamento do pedido")

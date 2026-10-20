@@ -2,8 +2,10 @@
 
 import logging
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -15,6 +17,7 @@ from django.utils import timezone
 
 from apps.fiscal.atf.client import open_atf_client
 from apps.fiscal.atf.correlation import reconcile_result
+from apps.fiscal.atf.diagnostics import diagnostic, diagnostic_code, error_message
 from apps.fiscal.atf.errors import (
     AtfArtifactError,
     AtfError,
@@ -69,21 +72,69 @@ def _alert(part: Any, code: Any) -> None:
         company_id=part.request.company_id,
         code=code,
         severity="warning",
-        title="Download ATF requer atenção",
-        message="Consulte os detalhes do pedido para retomar ou revisar o resultado.",
-        context={"request_id": str(part.request_id), "part_id": str(part.pk)},
+        title=diagnostic(code).summary,
+        message=(
+            f"{part.request.get_document_model_display()} · {part.format.upper()} · "
+            f"{part.start_date:%d/%m/%Y} a {part.end_date:%d/%m/%Y}. "
+            f"{error_message(code)}"
+        ),
+        context={
+            "request_id": str(part.request_id),
+            "part_id": str(part.pk),
+            "error_code": code,
+        },
     )
 
 
-def enqueue_part(part_id: Any, eta: Any = None) -> None:
+def _record_failure(part: Any, attempt: Any, error: Exception, started: float) -> None:
+    part.error_code = diagnostic_code(error)
+    frames = " > ".join(
+        f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+        for frame in traceback.extract_tb(error.__traceback__)[-8:]
+    )
+    # Exception messages, response bodies and traceback locals can contain secrets.
+    logger.warning(
+        "event=atf_part_failed request_id=%s part_id=%s attempt_id=%s company_id=%s "
+        "model=%s format=%s operation=%s code=%s exception_type=%s elapsed_ms=%d "
+        "retry_count=%s retry_cycle=%s http_status=%s frames=%s",
+        part.request_id,
+        part.pk,
+        attempt.pk,
+        part.request.company_id,
+        part.request.document_model,
+        part.format,
+        attempt.operation,
+        part.error_code,
+        type(error).__name__,
+        int((time.monotonic() - started) * 1000),
+        part.retry_count,
+        part.retry_cycle,
+        error.http_status if isinstance(error, AtfError) else None,
+        frames,
+    )
+
+
+def enqueue_part(part_id: Any, eta: Any = None) -> bool:
     from apps.fiscal.tasks import process_download_part
 
     try:
-        process_download_part.apply_async(args=[str(part_id)], eta=eta)
-    except Exception:
+        result = process_download_part.apply_async(args=[str(part_id)], eta=eta)
+        logger.info(
+            "event=atf_part_dispatched part_id=%s celery_task_id=%s eta=%s",
+            part_id,
+            getattr(result, "id", None),
+            eta,
+        )
+        return True
+    except Exception as error:
         part = DownloadPart.objects.select_related("request").get(pk=part_id)
         _alert(part, "atf_queue_unavailable")
-        logger.warning("event=atf_dispatch_failed part_id=%s", part_id)
+        logger.warning(
+            "event=atf_dispatch_failed part_id=%s exception_type=%s",
+            part_id,
+            type(error).__name__,
+        )
+        return False
 
 
 @transaction.atomic
@@ -564,8 +615,8 @@ def advance_part(
     except AtfPermissionError as error:
         if error.args == ("atf_lease_lost",):
             return AdvanceResult(part.status)
-        part.error_code = error.safe_code
-        _alert(part, error.safe_code)
+        _record_failure(part, attempt, error, elapsed_start)
+        _alert(part, part.error_code)
         part.status = "failed"
         part.save(update_fields=["status", "error_code"])
         consolidate_request(part.request_id)
@@ -575,8 +626,8 @@ def advance_part(
             with transaction.atomic():
                 assert_access(account_token, now=current_time())
         part.refresh_from_db()
-        part.error_code = error.safe_code
-        _alert(part, error.safe_code)
+        _record_failure(part, attempt, error, elapsed_start)
+        _alert(part, part.error_code)
         if isinstance(error, AtfSubmissionUncertain):
             return _schedule(
                 part, now, dispatch, status="ambiguous", token=company_token
@@ -605,6 +656,23 @@ def advance_part(
                 return deferred
         part.status = "failed"
         part.save(update_fields=["status", "error_code"])
+        consolidate_request(part.request_id)
+        return AdvanceResult("failed")
+    except Exception as error:
+        with transaction.atomic():
+            assert_access(company_token, now=current_time())
+        part.refresh_from_db()
+        _record_failure(part, attempt, error, elapsed_start)
+        if (
+            attempt.operation == "submit"
+            and part.submitted_at
+            and attempt.submission_certainty != "accepted"
+        ):
+            attempt.submission_certainty = "uncertain"
+            attempt.save(update_fields=["submission_certainty"])
+        part.status = "failed"
+        part.save(update_fields=["status", "error_code"])
+        _alert(part, part.error_code)
         consolidate_request(part.request_id)
         return AdvanceResult("failed")
     finally:

@@ -4,8 +4,15 @@ from typing import Any
 class AtfError(Exception):
     safe_code = "atf_error"
 
-    def __init__(self, message: str | None = None) -> None:
+    def __init__(
+        self, message: str | None = None, *, http_status: int | None = None
+    ) -> None:
         super().__init__(message or self.safe_code)
+        self.http_status = (
+            http_status
+            if http_status is not None and 100 <= http_status <= 599
+            else None
+        )
 
 
 class AtfAuthenticationError(AtfError):
@@ -27,8 +34,14 @@ class AtfPortalChanged(AtfError):
 class AtfTransientError(AtfError):
     safe_code = "atf_transient_error"
 
-    def __init__(self, message: Any = None, *, retry_after_seconds: Any = 0) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: Any = None,
+        *,
+        retry_after_seconds: Any = 0,
+        http_status: int | None = None,
+    ) -> None:
+        super().__init__(message, http_status=http_status)
         self.retry_after_seconds = max(0, retry_after_seconds)
 
 

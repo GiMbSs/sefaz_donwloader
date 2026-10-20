@@ -9,7 +9,7 @@ MAX_FISCAL_XML_BYTES = 10 * 1024 * 1024
 
 
 class FiscalSchemaError(ValueError):
-    """A fiscal XML payload is malformed or outside its pinned XSD contract."""
+    """A fiscal XML payload is malformed or uses an unsupported structure."""
 
 
 def parse_fiscal_xml(payload: bytes) -> etree._Element:
@@ -28,6 +28,10 @@ def parse_fiscal_xml(payload: bytes) -> etree._Element:
         root = etree.fromstring(payload, parser=parser)
     except etree.XMLSyntaxError as error:
         raise FiscalSchemaError("O XML fiscal não é bem-formado.") from error
-    if etree.QName(root).namespace != NFE_NAMESPACE:
+    name = etree.QName(root)
+    if name.namespace not in {NFE_NAMESPACE, None} or (
+        name.namespace is None
+        and name.localname not in {"NFe", "nfeProc", "procEventoNFe"}
+    ):
         raise FiscalSchemaError("O namespace do XML fiscal não é suportado.")
     return root

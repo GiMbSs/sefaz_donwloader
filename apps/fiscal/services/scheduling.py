@@ -1,6 +1,7 @@
 """Preserve programmable schedules while deriving explicit ATF periods."""
 
 import calendar
+import logging
 from datetime import date, datetime, time, timedelta
 from functools import partial
 from zoneinfo import ZoneInfo
@@ -16,6 +17,8 @@ from apps.operations.services import open_operation_alert
 from apps.organizations.models import ClientCompany
 
 from .downloads import enqueue_part, request_download
+
+logger = logging.getLogger(__name__)
 
 
 def period_for_policy(policy: DownloadPolicy, now: datetime) -> Period:
@@ -73,8 +76,13 @@ def _due_occurrences(policy: DownloadPolicy, now: datetime) -> list[datetime]:
 
 def enqueue_due_downloads(*, now: datetime, dispatch: bool = True) -> int:
     if not getattr(settings, "ATF_PB_ENABLED", False):
+        logger.info(
+            "event=atf_scheduler_tick enabled=false "
+            "created_requests=0 recovered_parts=0"
+        )
         return 0
     queued = 0
+    recovered = 0
     policies = DownloadPolicy.objects.filter(
         is_active=True, company__status="active"
     ).exclude(mode="manual")
@@ -130,5 +138,11 @@ def enqueue_due_downloads(*, now: datetime, dispatch: bool = True) -> int:
             .order_by("request__created_at")[:100]
         )
         for part in due:
-            enqueue_part(part.pk)
+            if enqueue_part(part.pk):
+                recovered += 1
+    logger.info(
+        "event=atf_scheduler_tick enabled=true created_requests=%s recovered_parts=%s",
+        queued,
+        recovered,
+    )
     return queued

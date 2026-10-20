@@ -132,7 +132,7 @@ class DownloadRequestDetailView(DownloadAccessMixin, TemplateView):
         download = self.get_download()
         context.update(
             download=download,
-            parts=download.parts.prefetch_related("archives__members"),
+            parts=download.parts.prefetch_related("archives__members", "attempts"),
             can_manage=download.company.status == "active"
             and manageable_companies(self.request.user)
             .filter(pk=download.company_id)

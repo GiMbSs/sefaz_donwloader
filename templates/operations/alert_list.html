@@ -1,4 +1,5 @@
 {% extends 'operations/base.html' %}
+{% load download_ui %}
 
 {% block title %}Alertas · SEFAZ Downloader{% endblock %}
 {% block page_title %}Alertas operacionais{% endblock %}
@@ -26,7 +27,7 @@
             <tr>
               <td><span class="status status-{{ alert.severity }}">{{ alert.get_severity_display }}</span></td>
               <td><a href="{% url 'company-detail' alert.company_id %}">{{ alert.company.legal_name }}</a></td>
-              <td><strong>{{ alert.title }}</strong><div class="alert-message">{{ alert.message }}</div>{% if alert.status == 'resolved' %}<div class="alert-resolution">Resolvido por {{ alert.resolved_by.get_full_name|default:alert.resolved_by.email|default:'usuário removido' }} em {{ alert.resolved_at|date:'d/m/Y H:i' }}{% if alert.resolution_note %}: {{ alert.resolution_note }}{% endif %}</div>{% endif %}</td>
+              <td><strong>{{ alert.title }}</strong><div class="alert-message">{{ alert.message }}</div>{% with download_url=alert.context.request_id|download_request_url %}{% if download_url %}<a href="{{ download_url }}">Ver pedido</a>{% endif %}{% endwith %}{% if alert.status == 'resolved' %}<div class="alert-resolution">Resolvido por {{ alert.resolved_by.get_full_name|default:alert.resolved_by.email|default:'usuário removido' }} em {{ alert.resolved_at|date:'d/m/Y H:i' }}{% if alert.resolution_note %}: {{ alert.resolution_note }}{% endif %}</div>{% endif %}</td>
               <td>{{ alert.created_at|date:'d/m/Y H:i' }}</td>
               <td><span class="status status-{{ alert.status }}">{{ alert.get_status_display }}</span></td>
               <td>{% if alert.status == 'open' and alert.company_id in manageable_company_ids %}<form method="post" action="{% url 'alert-resolve' alert.pk %}" class="resolve-form">{% csrf_token %}<label class="sr-only" for="resolution-note-{{ alert.pk }}">Registro da resolução para {{ alert.title }}</label><textarea id="resolution-note-{{ alert.pk }}" name="resolution_note" rows="2" maxlength="2000" placeholder="Registro opcional"></textarea><button class="button button-secondary" type="submit">Marcar resolvido</button></form>{% else %}<span class="quiet">{% if alert.status == 'open' %}Somente administradores{% else %}—{% endif %}</span>{% endif %}</td>

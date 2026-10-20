@@ -104,10 +104,17 @@ class AtfPbClient:
                         getattr(settings, "ATF_READ_TIMEOUT_SECONDS", 60),
                     ),
                 )
-            except requests.RequestException:
+            except requests.RequestException as error:
                 if submission:
                     raise AtfSubmissionUncertain() from None
-                raise AtfTransientError() from None
+                if isinstance(error, requests.exceptions.SSLError):
+                    raise AtfAuthenticationError("atf_tls_failed") from None
+                reason = (
+                    "atf_connection_timeout"
+                    if isinstance(error, requests.Timeout)
+                    else "atf_connection_failed"
+                )
+                raise AtfTransientError(reason) from None
             status = response.status_code
             if status in {301, 302, 303, 307, 308}:
                 location = response.headers.get("Location", "")
@@ -143,7 +150,13 @@ class AtfPbClient:
                             )
                         except (TypeError, ValueError, OverflowError):
                             delay = 0
-                    raise AtfTransientError(retry_after_seconds=delay)
+                    raise AtfTransientError(
+                        "atf_rate_limited"
+                        if status == 429
+                        else "atf_remote_unavailable",
+                        retry_after_seconds=delay,
+                        http_status=status,
+                    )
                 raise AtfPortalChanged()
             if binary:
                 return response

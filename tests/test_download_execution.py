@@ -192,7 +192,7 @@ def test_missing_certificate_finishes_with_safe_error_without_network(
     )
     result = advance_part(request.parts.get().pk, dispatch=False)
     assert result.status == "failed"
-    assert request.parts.get().error_code == "atf_authentication_failed"
+    assert request.parts.get().error_code == "atf_certificate_unavailable"
 
 
 def test_inactive_company_cannot_submit_new_query(
