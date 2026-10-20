@@ -54,7 +54,7 @@ from .leases import (
     renew_access,
     reserve_mailbox_poll,
 )
-from .periods import active_request_key, split_period
+from .periods import active_request_key
 
 logger = logging.getLogger(__name__)
 TERMINAL_PARTS = {"succeeded", "empty", "failed"}
@@ -197,14 +197,13 @@ def request_download(
         .astimezone(ZoneInfo(policy.timezone if policy else settings.TIME_ZONE))
         .date(),
     )
-    for portion in split_period(period, document_model):
-        for format in canonical:
-            DownloadPart.objects.create(
-                request=request,
-                start_date=portion.start,
-                end_date=portion.end,
-                format=format,
-            )
+    for format in canonical:
+        DownloadPart.objects.create(
+            request=request,
+            start_date=period.start,
+            end_date=period.end,
+            format=format,
+        )
     AuditLog.objects.create(
         actor_id=actor_id,
         action="fiscal.download_requested",

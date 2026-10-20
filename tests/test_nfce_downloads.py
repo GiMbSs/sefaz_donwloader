@@ -83,9 +83,9 @@ def test_nfce_and_nfe_requests_do_not_coalesce(download_company, download_actor)
     assert nfe.pk != nfce.pk
     assert repeated.pk == nfce.pk
     assert nfce.document_model == "65"
-    assert nfce.parts.count() == 6
+    assert nfce.parts.count() == 2
     assert set(nfce.parts.values_list("start_date", "end_date")) == {
-        (date(2024, 10, day), date(2024, 10, day)) for day in (1, 2, 3)
+        (date(2024, 10, 1), date(2024, 10, 3))
     }
     assert nfe.parts.count() == 2
 

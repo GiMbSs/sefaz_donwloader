@@ -2,7 +2,7 @@
 
 O sistema consulta NF-e (55) e NFC-e (65) emitidas, com certificado A1 individual da empresa. XML e TXT são pedidos separados, entregues pela caixa de mensagens do ATF em ZIP. Não há NSU nem escolha entre homologação e produção.
 
-O pedido manual exige modelo e datas inicial/final. Políticas podem selecionar um ou ambos os modelos; cada modelo gera seu próprio pedido. NFC-e usa partes diárias e janela de geração de sete dias (`ATF_NFCE_WAIT_TIMEOUT_SECONDS=604800`), com consultas progressivamente espaçadas até quinze minutos (`ATF_NFCE_MAX_POLL_INTERVAL_SECONDS=900`). A espera é persistida e retomada após reinício; não mantém um worker ocupado. Mais detalhes em [operação NFC-e](IMPLEMENTACAO-NFCE-PB.md).
+O pedido manual exige modelo e datas inicial/final. Políticas podem selecionar um ou ambos os modelos; cada modelo gera seu próprio pedido com o período completo uma vez por formato selecionado. NFC-e mantém janela de geração de sete dias (`ATF_NFCE_WAIT_TIMEOUT_SECONDS=604800`), com consultas progressivamente espaçadas até quinze minutos (`ATF_NFCE_MAX_POLL_INTERVAL_SECONDS=900`). A espera é persistida e retomada após reinício; não mantém um worker ocupado. Mais detalhes em [operação NFC-e](IMPLEMENTACAO-NFCE-PB.md).
 
 ## Configuração e corte
 

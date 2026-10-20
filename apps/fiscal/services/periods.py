@@ -1,34 +1,8 @@
-import calendar
 import hashlib
 import json
-from datetime import date, timedelta
 
 from apps.fiscal.atf.profiles import document_profile
 from apps.fiscal.atf.types import DownloadFormat, Period
-
-
-def split_period(period: Period, document_model: str = "55") -> tuple[Period, ...]:
-    document_profile(document_model)
-    parts = []
-    start = period.start
-    while start <= period.end:
-        end = (
-            start
-            if document_model == "65"
-            else min(
-                date(
-                    start.year,
-                    start.month,
-                    calendar.monthrange(start.year, start.month)[1],
-                ),
-                period.end,
-            )
-        )
-        parts.append(Period(start, end))
-        if end == period.end:
-            break
-        start = end + timedelta(days=1)
-    return tuple(parts)
 
 
 def active_request_key(

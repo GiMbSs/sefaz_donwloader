@@ -10,7 +10,7 @@ Pedidos manuais exigem modelo, data inicial e final. Políticas automáticas per
 
 ## Espera por alto volume
 
-- NFC-e divide o intervalo solicitado em partes diárias, para XML e TXT.
+- NFC-e envia o intervalo completo solicitado uma vez por formato (XML e/ou TXT), assim como NF-e. Pedidos manuais e programados seguem a mesma regra.
 - `ATF_NFCE_WAIT_TIMEOUT_SECONDS` define a janela de geração: padrão 604800 segundos (sete dias).
 - `ATF_POLL_INTERVAL_SECONDS` define o intervalo inicial: padrão 60 segundos. O intervalo cresce a cada três consultas saudáveis até `ATF_NFCE_MAX_POLL_INTERVAL_SECONDS`, padrão 900 segundos.
 - Prazo, candidatos, etapas e contador de consultas ficam no banco. Reinícios não perdem a espera. Nenhum POST aceito ou de resultado incerto é reenviado automaticamente.

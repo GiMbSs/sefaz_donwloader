@@ -2,7 +2,7 @@
 
 Estação de trabalho local para escritórios contábeis baixarem XML e TXT de NF-e (55) e NFC-e (65) emitidas, por empresa. O certificado A1 individual autentica o acesso ao ATF da SEFAZ-PB; relatórios chegam pela caixa de mensagens em arquivos ZIP.
 
-Pedidos manuais escolhem o modelo e o período. Políticas automáticas podem coletar ambos os modelos. NFC-e usa partes diárias e espera persistente de até sete dias, configurável; veja [operação NFC-e](docs/IMPLEMENTACAO-NFCE-PB.md).
+Pedidos manuais escolhem o modelo e o período. Políticas automáticas podem coletar ambos os modelos. Cada modelo envia o período completo uma vez por formato selecionado (XML e/ou TXT). NFC-e mantém espera persistente de até sete dias, configurável; veja [operação NFC-e](docs/IMPLEMENTACAO-NFCE-PB.md).
 
 ## Operação
 
