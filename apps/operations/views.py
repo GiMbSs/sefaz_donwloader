@@ -82,10 +82,10 @@ class DashboardView(LoginRequiredMixin, TemplateView):
                 "has_offices": AccountingOffice.objects.exists(),
                 "company_count": companies.count(),
                 "active_company_count": active_company_ids.count(),
-                "waiting_requests": DownloadRequest.objects.filter(
+                "waiting_request_count": DownloadRequest.objects.filter(
                     company_id__in=active_company_ids,
                     status="waiting",
-                ).select_related("company"),
+                ).count(),
                 "expiring_certificates": DigitalCertificate.objects.filter(
                     company_id__in=active_company_ids,
                     status=DigitalCertificate.Status.ACTIVE,

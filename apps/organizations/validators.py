@@ -27,7 +27,7 @@ def _check_digit(characters: str, weights: tuple[int, ...]) -> int:
 def validate_tax_identifier(value: str) -> None:
     """Validate numeric and alphanumeric CNPJ values using Receita's modulus 11."""
     canonical = normalize_tax_identifier(value)
-    if not _CNPJ_PATTERN.fullmatch(canonical):
+    if not _CNPJ_PATTERN.fullmatch(canonical) or canonical == "00000000000000":
         raise ValidationError("Informe um CNPJ válido com 14 posições.")
 
     first_digit = _check_digit(canonical[:12], (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2))

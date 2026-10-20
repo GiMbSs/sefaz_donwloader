@@ -57,7 +57,7 @@ warn_unused_ignores = true
 warn_return_any = true
 
 [[tool.mypy.overrides]]
-module = ["celery.*"]
+module = ["celery.*", "kombu.exceptions"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

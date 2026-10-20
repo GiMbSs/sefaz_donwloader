@@ -5,17 +5,52 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+
+from apps.fiscal.atf.profiles import document_profile
+from apps.organizations.validators import (
+    normalize_tax_identifier,
+    validate_tax_identifier,
+)
 
 if TYPE_CHECKING:
-    pass
+    from apps.organizations.models import ClientCompany
 
 
 class FiscalStorageError(Exception):
     pass
+
+
+def download_storage_directory(
+    company: ClientCompany,
+    *,
+    document_model: str,
+    format: str,
+    requested_on: date,
+) -> Path:
+    """Keep new fiscal files tenant-scoped using the original request date."""
+    profile = document_profile(document_model)
+    if format not in {"xml", "txt"}:
+        raise FiscalStorageError("Unsupported fiscal storage format.")
+    office_cnpj = normalize_tax_identifier(company.office.tax_identifier)
+    company_cnpj = normalize_tax_identifier(company.tax_identifier)
+    try:
+        validate_tax_identifier(office_cnpj)
+        validate_tax_identifier(company_cnpj)
+    except ValidationError as error:
+        raise FiscalStorageError("Invalid fiscal storage identity.") from error
+    return (
+        Path(office_cnpj)
+        / company_cnpj
+        / ("NFCe" if profile.model == "65" else "NFe")
+        / format.upper()
+        / requested_on.isoformat()
+    )
 
 
 class FiscalStorage:

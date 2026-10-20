@@ -2,6 +2,47 @@ import pytest
 import requests
 
 
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        (
+            'attachment; filename="Consulta_01-10-2026_20-10-2026.zip"',
+            "Consulta_01-10-2026_20-10-2026.zip",
+        ),
+        (
+            "attachment; filename=Consulta_01-10-2026_20-10-2026.zip",
+            "Consulta_01-10-2026_20-10-2026.zip",
+        ),
+        (
+            "attachment; filename=ascii.zip; "
+            "filename*=UTF-8''Consulta%20NF-e%20outubro.zip",
+            "Consulta NF-e outubro.zip",
+        ),
+        (
+            "attachment; filename*=UTF-8''Consulta%20emiss%C3%A3o.zip",
+            "Consulta emissão.zip",
+        ),
+        ('attachment; filename="../../escape.zip"', "fallback.zip"),
+        ('attachment; filename="C:\\escape.zip"', "fallback.zip"),
+        ('attachment; filename="CON.zip"', "fallback.zip"),
+        ("", "fallback.zip"),
+    ],
+)
+def test_download_retains_safe_original_filename(tmp_path, header, expected):
+    from apps.fiscal.atf.client import AtfPbClient
+    from apps.fiscal.atf.types import AttachmentRef
+
+    response = Response(b"PK\x03\x04synthetic zip stream")
+    response.headers.update(
+        {"Content-Type": "application/zip", "Content-Disposition": header}
+    )
+    client = AtfPbClient(Session([response]), "00000000000191", tmp_path)
+    client.current_message = "10"
+    download = client.download_attachment(AttachmentRef("10", 0, "fallback.zip"))
+    assert download.filename == expected
+    assert download.staging_path.read_bytes() == response.content
+
+
 class Response:
     def __init__(self, body=b"", status=200, location=None):
         self.status_code = status

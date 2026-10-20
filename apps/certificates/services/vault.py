@@ -397,8 +397,22 @@ def register_certificate(
 
     metadata = inspect_pkcs12(payload, password)
     now = timezone.now()
-    if metadata.not_valid_after <= now:
-        raise CertificateValidationError("The certificate is expired.")
+    if not metadata.not_valid_before <= now < metadata.not_valid_after:
+        raise CertificateValidationError(
+            "The certificate is outside its validity period."
+        )
+    from .identity import certificate_cnpj
+
+    _, public_certificate, _ = pkcs12.load_key_and_certificates(
+        payload, password.encode("utf-8")
+    )
+    if (
+        public_certificate is None
+        or certificate_cnpj(public_certificate) != company.tax_identifier
+    ):
+        raise CertificateValidationError(
+            "The certificate does not identify this company."
+        )
 
     vault = vault or CertificateVault()
     certificate = DigitalCertificate(

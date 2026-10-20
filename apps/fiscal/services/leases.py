@@ -107,7 +107,7 @@ def begin_submission(
 ) -> None:
     lease = assert_access(token, now=now)
     part = (
-        DownloadPart.objects.select_for_update()
+        DownloadPart.objects.select_for_update(of=("self",))
         .select_related("request__company")
         .get(pk=part_id)
     )
@@ -153,7 +153,7 @@ def bind_remote_result(
     part_id: UUID, account_key: str, parent_id: str, *, actor_id: int | None
 ) -> RemoteResultBinding:
     part = (
-        DownloadPart.objects.select_for_update()
+        DownloadPart.objects.select_for_update(of=("self",))
         .select_related("request")
         .get(pk=part_id)
     )

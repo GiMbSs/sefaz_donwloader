@@ -14,11 +14,19 @@ O pedido manual exige modelo e datas inicial/final. Políticas podem selecionar 
 
 ## Pedidos e histórico
 
+O upload do A1 confere CNPJ e validade antes de substituir o certificado ativo. Se a fila estiver indisponível, o envelope cifrado permanece pendente: a manutenção periódica tenta publicá-lo novamente a cada cinco minutos enquanto estiver válido. Uploads em processamento não são republicados; após o prazo de expiração, o envelope é apagado e um novo envio pode ser feito.
+
 Cada empresa possui a tela **Pedidos de download**, acessível por **Ver todos os pedidos** no cadastro. Ela lista todas as solicitações, incluindo agendadas, manuais, falhas e pendentes, com período, formatos, usuário manual, situação e próxima tentativa. O detalhe permite baixar ZIPs, conferir resultados ambíguos e retomar acompanhamento. Datas inicial e final são obrigatórias em pedidos manuais.
 
 O agendamento mantém modo, frequência, horário, fuso, dias da semana/dia do mês e ativação existentes. O período passa a ser dia anterior, mês anterior ou últimos dias completos; não é inferido a partir de NSU. Novas empresas começam no modo manual. Dias mensais inexistentes usam o último dia do mês.
 
-Arquivos ficam em `escritorios/escritorio_<CNPJ do escritório>/empresas/<CNPJ>/XML|TXT/AAAA/MM/DD/<pedido>/<parte>/`. A data é a da solicitação original no fuso da política (ou da instalação), mantida em retomadas. ZIPs originais são identificados por hash; conteúdos separados ficam em `membros/`. IDs evitam colisões entre pedidos no mesmo dia. TXT mantém seus bytes originais.
+Novos arquivos ficam em `<CNPJ do escritório>/<CNPJ da empresa>/NFe|NFCe/XML|TXT/AAAA-MM-DD/`. Exemplo: `11222333000181/00000000000191/NFCe/XML/2026-10-20/`. A data é a da solicitação original no fuso da política (ou da instalação), mantida em retomadas, mesmo que o arquivo fique disponível em outro dia. Cada data ocupa uma única pasta; não são criadas subpastas de pedido, parte ou membros.
+
+O ZIP mantém o nome original informado pela SEFAZ no cabeçalho do download, inclusive o período solicitado, tanto na pasta externa quanto no download pela interface. O recebimento usa um arquivo temporário separado e o tratamento lê o ZIP sem alterar seus bytes. O hash SHA-256 completo continua registrado para conferência.
+
+ZIPs com mesmo nome e conteúdo idêntico podem compartilhar o arquivo físico. Se o nome se repetir com conteúdo diferente, o novo original fica em `versoes/<SHA-256>/<nome-original.zip>` dentro da pasta de data, preservando ambos sem sobrescrita ou renomeação do ZIP. Essa é uma exceção à estrutura plana. Os conteúdos extraídos usam nomes por hash para preservar suas versões e seus bytes originais. Quando a SEFAZ não informa um nome utilizável, o armazenamento mantém o fallback por hash; nomes que representem caminhos não são usados.
+
+Os caminhos anteriores continuam sendo lidos a partir dos registros existentes. Não há movimentação automática de arquivos antigos; reindexações preservam os caminhos de membros já registrados. O cofre de certificados mantém sua estrutura privada atual.
 
 No download, XML é analisado sem DTD, entidades externas ou acesso de rede. O sistema verifica empresa, modelo, ambiente, período e chave, extrai `ide/nNF` e confere sua correspondência com a chave. Eventos ficam separados de notas; o número da nota aparece na consulta e pode ser pesquisado. Essa conferência não valida assinatura digital nem substitui o XSD completo: o estado `pending_schema` é explícito.
 

@@ -18,6 +18,7 @@ from apps.fiscal.models import (
 )
 from apps.operations.models import AuditLog
 from apps.organizations.access import accessible_companies, manageable_companies
+from apps.organizations.models import ClientCompany
 
 from .downloads import consolidate_request, enqueue_part
 
@@ -32,6 +33,20 @@ class RecoveryResult:
 def recover_download_request(
     request_id: Any, *, actor_id: Any, note: Any, dispatch: Any = True
 ) -> Any:
+    company_id = DownloadRequest.objects.values_list("company_id", flat=True).get(
+        pk=request_id
+    )
+    # Match request_download's company lock so a repeat cannot be created
+    # between the active-key check and reactivation of this request.
+    ClientCompany.objects.select_for_update().get(pk=company_id)
+    # Workers lock a part before consolidating its request. Lock every part
+    # first, in a stable order, so recovery never holds the request while
+    # waiting for a worker's part lock. Re-read states after obtaining locks.
+    parts = list(
+        DownloadPart.objects.select_for_update()
+        .filter(request_id=request_id)
+        .order_by("pk")
+    )
     request = DownloadRequest.objects.select_for_update().get(pk=request_id)
     user = get_user_model().objects.get(pk=actor_id)
     if (
@@ -45,10 +60,20 @@ def recover_download_request(
         raise ValidationError(
             "Pedido cancelado localmente; crie um novo pedido explícito."
         )
-    now, resumed, review = timezone.now(), [], False
-    for part in request.parts.select_for_update().exclude(
-        status__in=["succeeded", "empty"]
+    if (
+        DownloadRequest.objects.filter(
+            active_key=request.active_key, status__in=["queued", "running", "waiting"]
+        )
+        .exclude(pk=request.pk)
+        .exists()
     ):
+        raise ValidationError(
+            "Já existe um pedido equivalente ativo. Retome esse pedido."
+        )
+    now, resumed, review = timezone.now(), [], False
+    for part in parts:
+        if part.status in {"succeeded", "empty"}:
+            continue
         if AtfAccessLease.objects.filter(part=part, expires_at__gt=now).exists():
             raise ValidationError("Aguarde a etapa em execução terminar.")
         uncertain = (
@@ -87,7 +112,7 @@ def abandon_uncertain_submission(
     part_id: Any, *, actor_id: Any, note: Any, acknowledge_remote_uncertainty: Any
 ) -> Any:
     part = (
-        DownloadPart.objects.select_for_update()
+        DownloadPart.objects.select_for_update(of=("self",))
         .select_related("request")
         .get(pk=part_id)
     )

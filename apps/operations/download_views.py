@@ -333,23 +333,25 @@ class InvoiceDocumentListView(LoginRequiredMixin, ListView):
             return queryset.order_by("-pk")
         else:
             self.kind = "invoice"
-            queryset = (
-                InvoiceDocument.objects.filter(company__in=companies)
-                .select_related("company")
-                .prefetch_related("versions")
-            )
+            queryset = InvoiceDocument.objects.filter(
+                company__in=companies
+            ).select_related("company")
         if term:
             queryset = queryset.filter(
                 Q(access_key__icontains=term)
                 | Q(company__legal_name__icontains=term)
                 | Q(company__tax_identifier__icontains=term)
             )
-            if self.kind == "invoice" and term.isdecimal():
+            if (
+                self.kind == "invoice"
+                and term.isascii()
+                and term.isdecimal()
+                and len(term) <= 9
+            ):
                 queryset = (
                     InvoiceDocument.objects.filter(company__in=companies)
                     .filter(Q(pk__in=queryset.values("pk")) | Q(number=int(term)))
                     .select_related("company")
-                    .prefetch_related("versions")
                 )
         if self.document_model:
             if self.kind == "invoice":

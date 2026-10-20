@@ -90,3 +90,4 @@ class DownloadedArchive:
     sha256: str
     byte_count: int
     content_type: str
+    filename: str | None = None

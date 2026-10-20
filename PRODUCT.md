@@ -28,7 +28,7 @@ Uso interno em navegador, com instalação Docker local. A SEFAZ-PB pode respond
 - Datas inicial/final obrigatórias em pedidos manuais e períodos completos nas políticas programáveis.
 - Modo, frequência, horário, fuso, dias e ativação de agendamento configuráveis.
 - Certificados A1/PFX e credenciais recuperáveis cifrados fora do banco e do volume público.
-- Pastas privadas por escritório, empresas/CNPJ/XML|TXT/ano/mês/dia da solicitação.
+- Pastas privadas em CNPJ-escritório/CNPJ-empresa/NFe|NFCe/XML|TXT/AAAA-MM-DD, com a data original da solicitação.
 - Número da nota extraído do XML e conferido com a chave. Notas e eventos separados.
 - Nenhum POST de resultado incerto é repetido automaticamente; o sistema concilia a caixa antes de novo envio.
 - O histórico do motor nacional anterior não precisa ser preservado. Seus dados e recursos SOAP/NSU foram retirados sem resetar cadastros ou certificados.

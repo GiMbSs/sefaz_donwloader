@@ -45,8 +45,9 @@ def test_archived_note_and_event_are_indexed_idempotently(
     assert archive.path.endswith(".zip")
     assert InvoiceDocument.objects.get(company=download_company).number == 1
     expected = (
-        f"/empresas/{download_company.tax_identifier}/XML/"
-        f"{request.requested_on:%Y/%m/%d}/"
+        f"{download_company.office.tax_identifier}/"
+        f"{download_company.tax_identifier}/NFe/XML/"
+        f"{request.requested_on:%Y-%m-%d}/"
     )
     assert expected in archive.path
     assert all(expected in member.path for member in archive.members.all())

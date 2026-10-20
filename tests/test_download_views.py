@@ -105,3 +105,35 @@ def test_manual_request_requires_both_dates(client, download_company, download_a
     assert response.status_code == 400
     assert "end_date" in response.context["form"].errors
     assert not download_company.download_requests.exists()
+
+
+def test_document_search_accepts_long_numeric_input(
+    client, download_company, download_actor
+):
+    client.force_login(download_actor)
+
+    response = client.get(reverse("document-list"), {"q": "1" * 5000})
+
+    assert response.status_code == 200
+    assert not response.context["documents"]
+
+
+def test_document_search_preserves_number_and_full_access_key_lookups(
+    client, download_company, download_actor
+):
+    from apps.fiscal.models import InvoiceDocument
+
+    document = InvoiceDocument.objects.create(
+        company=download_company,
+        access_key="2" * 44,
+        model="55",
+        number=123456789,
+        issued_on=date(2024, 10, 10),
+    )
+    client.force_login(download_actor)
+
+    for term in (str(document.number), document.access_key):
+        response = client.get(reverse("document-list"), {"q": term})
+
+        assert response.status_code == 200
+        assert list(response.context["documents"]) == [document]

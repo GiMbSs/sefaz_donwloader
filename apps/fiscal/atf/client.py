@@ -25,6 +25,7 @@ from .errors import (
     AtfSubmissionUncertain,
     AtfTransientError,
 )
+from .filenames import attachment_filename
 from .forms import form_fields, parse_issuer, portal_document, visible_text
 from .messages import parse_message, parse_message_page
 from .profiles import document_profile
@@ -312,6 +313,9 @@ class AtfPbClient:
                 digest.hexdigest(),
                 total,
                 response.headers.get("Content-Type", ""),
+                attachment_filename(
+                    response.headers.get("Content-Disposition", ""), ref.filename
+                ),
             )
         except requests.RequestException:
             target.unlink(missing_ok=True)

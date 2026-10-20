@@ -124,3 +124,73 @@ def test_postgres_claim_grants_only_one_concurrent_owner(part):
         futures = [executor.submit(claim) for _ in range(2)]
         tokens = [future.result(timeout=15) for future in futures]
     assert sum(token is not None for token in tokens) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("operation", ["submit", "bind", "persist", "abandon"])
+def test_postgres_part_operations_do_not_lock_joined_company_or_request(
+    part, operation
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import close_old_connections, connection, transaction
+
+    from apps.fiscal.atf.types import SubmissionEvidence
+    from apps.fiscal.models import DownloadRequest
+    from apps.fiscal.services.artifacts import persist_archive
+    from apps.fiscal.services.download_recovery import abandon_uncertain_submission
+    from apps.fiscal.services.leases import (
+        begin_submission,
+        bind_remote_result,
+        claim_access,
+    )
+    from apps.organizations.models import ClientCompany
+
+    if connection.vendor != "postgresql":
+        pytest.skip("Requires PostgreSQL row locks")
+
+    class PartLockChecked(Exception):
+        pass
+
+    def lock_related_rows():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                ClientCompany.objects.select_for_update(nowait=True).get(
+                    pk=part.request.company_id
+                )
+                DownloadRequest.objects.select_for_update(nowait=True).get(
+                    pk=part.request_id
+                )
+        finally:
+            connection.close()
+
+    def check_after_part_lock(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if "fiscal_downloadpart" in sql and "FOR UPDATE" in sql:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(lock_related_rows).result(timeout=5)
+            # Stop at the lock boundary; no network, files, or further writes.
+            raise PartLockChecked()
+        return result
+
+    now = timezone.now()
+    token = claim_access("account:" + part.remote_account_key, part.pk, now=now)
+    evidence = SubmissionEvidence(part.pk, part.pk, (), now)
+    with (
+        pytest.raises(PartLockChecked),
+        connection.execute_wrapper(check_after_part_lock),
+    ):
+        if operation == "submit":
+            begin_submission(part.pk, token, evidence, now=now)
+        elif operation == "bind":
+            bind_remote_result(part.pk, part.remote_account_key, "20", actor_id=None)
+        elif operation == "persist":
+            persist_archive(part.pk, None, None, None)
+        else:
+            abandon_uncertain_submission(
+                part.pk,
+                actor_id=None,
+                note="Lock regression",
+                acknowledge_remote_uncertainty=True,
+            )

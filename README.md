@@ -10,8 +10,8 @@ Pedidos manuais escolhem o modelo e o período. Políticas automáticas podem co
 - Pedidos manuais com data inicial, data final e formatos XML/TXT.
 - Downloads automáticos programáveis por horário, fuso e frequência diária, semanal ou mensal; períodos explícitos e recuperação de ocorrências perdidas durante indisponibilidade.
 - Histórico completo de pedidos por empresa, origem manual/automática, usuário solicitante, situação e próxima tentativa.
-- Leitura segura do XML, identificação da nota pelo número e chave, separação de eventos e preservação dos ZIPs e TXT originais.
-- Arquivos em `escritorios/escritorio_<CNPJ>/empresas/<CNPJ>/XML|TXT/AAAA/MM/DD/<pedido>/<parte>/`, usando a data da solicitação original.
+- Leitura segura do XML, identificação da nota pelo número e chave, separação de eventos e preservação dos ZIPs com seus nomes originais e dos bytes XML/TXT.
+- Novos arquivos em `<CNPJ-escritório>/<CNPJ-empresa>/NFe|NFCe/XML|TXT/AAAA-MM-DD/`, usando a data da solicitação original; caminhos anteriores continuam acessíveis.
 - Timeouts configuráveis, tentativas curtas e reagendamento automático prolongado para falhas transitórias de pedidos agendados. Envios incertos são conciliados antes de qualquer nova submissão.
 
 A integração nacional SOAP, o controle de NSU e a seleção de ambiente fiscal foram retirados. Dados fiscais gerados pelo motor antigo podem ser descartados pelas migrations; cadastros, usuários, certificados e configurações programáveis são mantidos.
@@ -53,6 +53,7 @@ A suíte padrão usa SQLite descartável e dados sintéticos, sem rede SEFAZ. A 
 A conferência estrutural/identidade do XML não valida assinatura digital nem o XSD completo de NF-e/eventos; o estado de schema pendente fica explícito. Smoke do backend A1/ACL no Windows permanece necessário. Contratos não observados de paginação JavaScript ou confirmação definitiva de resultado vazio exigem ajuste comprovado do portal.
 
 - [Guia operacional, configuração, retries e corte](docs/OPERACAO-ATF-PB.md)
+- [Revisão geral e correções de 20/10/2026](docs/REVISAO-GERAL-2026-10-20.md)
 - [Andamento e evidências da implementação](docs/IMPLEMENTACAO-ATF-PB.md)
 - [Plano e revisão de requisitos de 20/10/2026](docs/superpowers/plans/2026-10-19-atf-pb-migration.md)
 - [Validação anterior do login A1](docs/VALIDACAO-AUTENTICACAO-ATF-PB.md)

@@ -49,6 +49,7 @@ def index_archive(archive_id: Any, *, heartbeat: Any = None) -> IndexResult:
         heartbeat=heartbeat,
     )
     counts = {"invoice": 0, "event": 0, "txt": 0}
+    existing_paths = dict(archive.members.values_list("name", "path"))
     with zipfile.ZipFile(original) as source:
         original_names = {
             _member_name(info.filename): info for info in source.infolist()
@@ -59,9 +60,11 @@ def index_archive(archive_id: Any, *, heartbeat: Any = None) -> IndexResult:
             data = source.read(original_names[member.name])
             if len(data) != member.byte_count:
                 raise AtfArtifactError("atf_member_changed")
-            relative = (
-                Path(archive.path).parent
-                / "membros"
+            # Preserve previously indexed locations, including the old tree.
+            # New members live alongside their ZIP, without technical folders.
+            relative = Path(
+                existing_paths.get(member.name)
+                or Path(archive.path).parent
                 / (member.sha256 + (".txt" if member.kind == "txt" else ".xml"))
             )
             storage._write(relative, data)

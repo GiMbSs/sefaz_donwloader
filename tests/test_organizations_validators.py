@@ -22,6 +22,12 @@ def test_rejects_cnpj_with_invalid_check_digits():
         validate_tax_identifier("00.000.000/E08G-13")
 
 
+@pytest.mark.parametrize("value", ["00000000000000", "00.000.000/0000-00"])
+def test_rejects_all_zero_cnpj(value):
+    with pytest.raises(ValidationError):
+        validate_tax_identifier(value)
+
+
 @pytest.mark.django_db
 def test_company_full_clean_normalizes_formatted_cnpj():
     office = AccountingOffice(

@@ -42,9 +42,16 @@ def _company_and_user() -> tuple[ClientCompany, User]:
     return company, user
 
 
-def _valid_pkcs12(password: str) -> bytes:
+def _valid_pkcs12(password: str, *, cnpj="00000000000191", future=False) -> bytes:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Empresa Exemplo")])
+    name = x509.Name(
+        [
+            x509.NameAttribute(
+                NameOID.COMMON_NAME,
+                f"Empresa Exemplo:{cnpj}" if cnpj else "Empresa Exemplo",
+            )
+        ]
+    )
     now = datetime.now(UTC)
     certificate = (
         x509.CertificateBuilder()
@@ -52,7 +59,9 @@ def _valid_pkcs12(password: str) -> bytes:
         .issuer_name(name)
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_before(
+            now + timedelta(days=1) if future else now - timedelta(minutes=1)
+        )
         .not_valid_after(now + timedelta(days=30))
         .sign(private_key, hashes.SHA256())
     )
@@ -244,3 +253,156 @@ def test_worker_stores_hashed_password_and_client_scoped_encrypted_files(tmp_pat
     assert certificate.encrypted_password_path.startswith(expected_prefix)
     assert vault.load(certificate) == payload
     assert vault.unseal_password(certificate) == password
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "options", [{"cnpj": "11222333000181"}, {"cnpj": None}, {"future": True}]
+)
+def test_registration_rejects_unusable_replacement_preserving_active(tmp_path, options):
+    from apps.certificates.services.vault import (
+        CertificateValidationError,
+        register_certificate,
+    )
+
+    company, user = _company_and_user()
+    key = tmp_path / "vault.key"
+    key.write_bytes(base64.urlsafe_b64encode(b"v" * 32))
+    vault = CertificateVault(root=tmp_path / "certificates", key_file=key)
+    original = register_certificate(
+        company=company,
+        filename="valid.pfx",
+        payload=_valid_pkcs12("password"),
+        password="password",
+        uploaded_by=user,
+        vault=vault,
+    )
+    files = set(vault.root.rglob("*.enc"))
+    with pytest.raises(CertificateValidationError):
+        register_certificate(
+            company=company,
+            filename="replacement.pfx",
+            payload=_valid_pkcs12("password", **options),
+            password="password",
+            uploaded_by=user,
+            vault=vault,
+        )
+    original.refresh_from_db()
+    assert original.status == "active"
+    assert set(vault.root.rglob("*.enc")) == files
+    assert vault.unseal_password(original) == "password"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", ["submitted", "processing"])
+def test_expired_upload_does_not_swallow_fresh_submission(tmp_path, status):
+    company, user = _company_and_user()
+    old = CertificateUpload.objects.create(
+        company=company,
+        filename="old.pfx",
+        status=status,
+        encrypted_payload=b"old",
+        encrypted_password=b"old",
+        expires_at=timezone.now() - timedelta(seconds=1),
+    )
+    private, public = tmp_path / "private.key", tmp_path / "public.key"
+    generate_upload_keypair(private_key_file=private, public_key_file=public)
+    result = stage_certificate_upload(
+        company_id=company.pk,
+        filename="fresh.pfx",
+        payload=b"fresh",
+        password="password",
+        uploaded_by=user,
+        envelope=CertificateUploadEnvelope(public_key_file=public),
+        dispatch=False,
+    )
+    old.refresh_from_db()
+    assert result.created is True
+    assert result.upload.pk != old.pk
+    assert old.status == "expired"
+    assert old.encrypted_payload is None
+    assert old.encrypted_password is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_broker_failure_retains_retryable_upload_without_logging_secrets(
+    tmp_path, caplog
+):
+    from kombu.exceptions import OperationalError
+
+    from apps.certificates.tasks import expire_staged_certificate_uploads_task
+
+    company, user = _company_and_user()
+    private, public = tmp_path / "private.key", tmp_path / "public.key"
+    generate_upload_keypair(private_key_file=private, public_key_file=public)
+    envelope = CertificateUploadEnvelope(public_key_file=public)
+    kwargs = dict(
+        company_id=company.pk,
+        filename="fresh.pfx",
+        payload=b"fresh",
+        password="secret-password",
+        uploaded_by=user,
+        envelope=envelope,
+    )
+    with (
+        override_settings(DEV_MODE=False),
+        patch(
+            "apps.certificates.tasks.process_staged_certificate_upload.delay",
+            side_effect=OperationalError("secret-broker-url"),
+        ),
+    ):
+        result = stage_certificate_upload(**kwargs)
+    result.upload.refresh_from_db()
+    assert result.upload.status == "submitted"
+    assert result.upload.encrypted_payload is not None
+    assert "secret-password" not in caplog.text
+    assert "secret-broker-url" not in caplog.text
+    assert "certificate_upload_dispatch_failed" in caplog.text
+    with (
+        override_settings(DEV_MODE=False),
+        patch(
+            "apps.certificates.tasks.process_staged_certificate_upload.delay"
+        ) as dispatch,
+    ):
+        assert expire_staged_certificate_uploads_task() == 0
+        dispatch.assert_called_once_with(result.upload.pk)
+        dispatch.reset_mock()
+        retry = stage_certificate_upload(**kwargs)
+    assert retry.upload.pk == result.upload.pk
+    dispatch.assert_called_once_with(result.upload.pk)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_periodic_maintenance_retries_only_unexpired_submitted_uploads(tmp_path):
+    from apps.certificates.tasks import expire_staged_certificate_uploads_task
+
+    company, user = _company_and_user()
+    upload = CertificateUpload.objects.create(
+        company=company,
+        filename="fresh.pfx",
+        encrypted_payload=b"retained",
+        encrypted_password=b"retained",
+        expires_at=timezone.now() + timedelta(minutes=5),
+    )
+    with (
+        override_settings(DEV_MODE=False),
+        patch(
+            "apps.certificates.tasks.process_staged_certificate_upload.delay"
+        ) as dispatch,
+    ):
+        assert expire_staged_certificate_uploads_task() == 0
+        dispatch.assert_called_once_with(upload.pk)
+        dispatch.reset_mock()
+        upload.status = "processing"
+        upload.save(update_fields=["status"])
+        assert expire_staged_certificate_uploads_task() == 0
+        dispatch.assert_not_called()
+        upload.status = "completed"
+        upload.save(update_fields=["status"])
+        assert expire_staged_certificate_uploads_task() == 0
+        dispatch.assert_not_called()
+        upload.status = "submitted"
+        upload.expires_at = timezone.now() - timedelta(seconds=1)
+        upload.save(update_fields=["status", "expires_at"])
+        assert expire_staged_certificate_uploads_task() == 1
+        dispatch.assert_not_called()

@@ -1,3 +1,5 @@
+from typing import cast
+
 from celery import shared_task
 
 
@@ -10,9 +12,8 @@ def process_download_part(part_id: str) -> str:
 
 @shared_task(acks_late=True, reject_on_worker_lost=True)
 def poll_download_part(part_id: str) -> str:
-    from apps.fiscal.services.downloads import advance_part
-
-    return advance_part(part_id).status
+    """Accept older queued task names through the current processing flow."""
+    return cast(str, process_download_part(part_id))
 
 
 @shared_task

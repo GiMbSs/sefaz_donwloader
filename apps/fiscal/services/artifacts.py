@@ -22,14 +22,14 @@ from django.db import transaction
 from lxml import etree
 
 from apps.fiscal.atf.errors import AtfArtifactError, AtfIdentityMismatch
+from apps.fiscal.atf.filenames import safe_archive_filename
 from apps.fiscal.atf.profiles import document_profile
 from apps.fiscal.models import DownloadArchive, DownloadPart
 from apps.organizations.models import ClientCompany
-from apps.organizations.storage import company_storage_directory
 from apps.organizations.validators import normalize_tax_identifier
 
 from .schemas import NFE_NAMESPACE, FiscalSchemaError, parse_fiscal_xml
-from .storage import FiscalStorage
+from .storage import FiscalStorage, download_storage_directory
 
 
 @dataclass(frozen=True)
@@ -383,6 +383,11 @@ def validate_archive(
 
 def _publish_original(source: Any, target: Any, expected_digest: Any) -> None:
     target.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+    if target.exists():
+        with target.open("rb") as existing:
+            if hashlib.file_digest(existing, "sha256").hexdigest() == expected_digest:
+                return
+        raise FileExistsError()
     fd, temporary = tempfile.mkstemp(prefix=".atf-", dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as output, source.open("rb") as incoming:
@@ -393,7 +398,17 @@ def _publish_original(source: Any, target: Any, expected_digest: Any) -> None:
             if hashlib.file_digest(check, "sha256").hexdigest() != expected_digest:
                 raise AtfArtifactError("atf_archive_changed")
         os.chmod(temporary, 0o640)
-        os.replace(temporary, target)
+        try:
+            # Publish complete bytes atomically without replacing another ZIP,
+            # including when another worker claims this name at the same time.
+            os.link(temporary, target)
+        except FileExistsError:
+            with target.open("rb") as existing:
+                if (
+                    hashlib.file_digest(existing, "sha256").hexdigest()
+                    != expected_digest
+                ):
+                    raise
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -403,7 +418,7 @@ def persist_archive(
     part_id: Any, ref: Any, download: Any, validation: Any
 ) -> DownloadArchive:
     part = (
-        DownloadPart.objects.select_for_update()
+        DownloadPart.objects.select_for_update(of=("self",))
         .select_related("request__company__office")
         .get(pk=part_id)
     )
@@ -418,27 +433,35 @@ def persist_archive(
         if existing.part_id != part.pk or existing.sha256 != download.sha256:
             raise AtfArtifactError("atf_attachment_already_bound")
         return existing
-    company_root = company_storage_directory(part.request.company).parent
-    relative = (
-        company_root
-        / "empresas"
-        / part.request.company.tax_identifier
-        / part.format.upper()
-        / part.request.requested_on.strftime("%Y/%m/%d")
-        / str(part.request_id)
-        / str(part.pk)
-        / (download.sha256 + ".zip")
+    original_name = safe_archive_filename(download.filename) or safe_archive_filename(
+        ref.filename
     )
+    directory = download_storage_directory(
+        part.request.company,
+        document_model=part.request.document_model,
+        format=part.format,
+        requested_on=part.request.requested_on,
+    )
+    relative = directory / (original_name or download.sha256 + ".zip")
     storage = FiscalStorage()
-    _publish_original(
-        download.staging_path, storage._safe_target(relative), download.sha256
-    )
+    try:
+        _publish_original(
+            download.staging_path, storage._safe_target(relative), download.sha256
+        )
+    except FileExistsError:
+        # Preserve the original basename even when repeated periods yield
+        # different ZIPs. Identical bytes reuse the existing physical file.
+        relative = directory / "versoes" / download.sha256 / relative.name
+        _publish_original(
+            download.staging_path, storage._safe_target(relative), download.sha256
+        )
     result = DownloadArchive.objects.create(
         part=part,
         remote_account_key=part.remote_account_key,
         message_id=ref.message_id,
         attachment_index=ref.index,
-        filename=(
+        filename=original_name
+        or (
             f"{'nfce' if part.request.document_model == '65' else 'nfe'}_"
             f"{part.format}_{part.start_date}_{part.end_date}.zip"
         ),
@@ -448,9 +471,3 @@ def persist_archive(
         warnings=list(validation.warnings),
     )
     return result
-
-
-def revalidate_archive(archive_id: Any) -> Any:
-    from .documents import index_archive
-
-    return index_archive(archive_id)

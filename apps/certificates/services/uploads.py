@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from kombu.exceptions import OperationalError
 
 from apps.certificates.models import CertificateUpload, DigitalCertificate
 from apps.certificates.services.upload_envelope import (
@@ -28,6 +30,8 @@ from apps.organizations.models import ClientCompany
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
+
+logger = logging.getLogger(__name__)
 
 
 class CertificateUploadError(ValueError):
@@ -73,6 +77,11 @@ def stage_certificate_upload(
             .order_by("created_at")
             .first()
         )
+        if active_upload is not None and active_upload.expires_at <= now:
+            _discard_upload(
+                active_upload, status=CertificateUpload.Status.EXPIRED, now=now
+            )
+            active_upload = None
         if active_upload is not None:
             if dispatch and active_upload.status == CertificateUpload.Status.SUBMITTED:
                 # A worker can stop after the encrypted envelope is committed.
@@ -288,6 +297,16 @@ def expire_staged_certificate_uploads(*, now: datetime | None = None) -> int:
     return expired
 
 
+def retry_submitted_certificate_uploads() -> None:
+    """Recover unpublished envelopes; worker row claims make retries safe."""
+    upload_ids = CertificateUpload.objects.filter(
+        status=CertificateUpload.Status.SUBMITTED,
+        expires_at__gt=timezone.now(),
+    ).values_list("pk", flat=True)
+    for upload_id in upload_ids.iterator():
+        _dispatch_upload_processing(upload_id)()
+
+
 def _validate_upload(*, filename: str, payload: bytes, password: str) -> None:
     validate_certificate_upload_metadata(
         filename=filename,
@@ -333,7 +352,12 @@ def _dispatch_upload_processing(upload_id: int) -> Callable[[], None]:
             return
         from apps.certificates.tasks import process_staged_certificate_upload
 
-        process_staged_certificate_upload.delay(upload_id)
+        try:
+            process_staged_certificate_upload.delay(upload_id)
+        except OperationalError:
+            # The committed envelope remains available for a safe dispatch retry.
+            # Broker exception text can contain credentials, so omit it.
+            logger.warning("certificate_upload_dispatch_failed upload_id=%s", upload_id)
 
     return dispatch
 
