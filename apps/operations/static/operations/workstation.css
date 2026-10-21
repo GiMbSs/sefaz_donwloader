@@ -149,6 +149,33 @@ input[type="file"]::file-selector-button { margin-right: 0.75rem; padding: 0.4re
 .field-group input[aria-invalid="true"], .field-group select[aria-invalid="true"], .field-group textarea[aria-invalid="true"] { border-color: var(--red); }
 .form-actions { flex-wrap: wrap; margin-top: 0.5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .form-panel { margin-top: 1.5rem; }
+.schedule-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 19rem); align-items: start; gap: 1.5rem; margin-top: 1.5rem; }
+.policy-form { min-width: 0; max-width: none; margin-top: 0; }
+.policy-section { min-width: 0; margin: 0; padding: 0; border: 0; }
+.policy-section + .policy-section { margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px solid var(--line); }
+.policy-section > legend { float: left; width: 100%; margin: 0 0 0.5rem; padding: 0; color: var(--ink); font-size: 1.1rem; font-weight: 720; }
+.policy-section > legend + * { clear: both; }
+.policy-section > p { margin: 0 0 1rem; }
+.policy-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.policy-manual-note { margin: 0.8rem 0 0; }
+.policy-timezone summary { color: var(--blue); cursor: pointer; text-decoration: underline; text-underline-offset: 0.18em; }
+.policy-timezone[open] .field-group { margin-top: 0.8rem; }
+.schedule-help { position: sticky; top: 1.25rem; }
+.schedule-help h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+.schedule-help-list { margin: 0; }
+.schedule-help-list dt { margin-top: 1.15rem; font-weight: 700; }
+.schedule-help-list dt:first-child { margin-top: 0; }
+.schedule-help-list dd { margin: 0.35rem 0 0; color: var(--ink-soft); font-size: 0.86rem; line-height: 1.6; }
+.schedule-example { margin-top: 1.25rem; padding-top: 1.15rem; border-top: 1px solid var(--line); }
+.schedule-example h3 { margin: 0 0 0.6rem; font-size: 0.92rem; }
+.schedule-example p, .schedule-help > p { font-size: 0.86rem; line-height: 1.6; }
+.schedule-example p { margin: 0.6rem 0; }
+.schedule-help > p:last-child { margin: 1.15rem 0 0; }
+.policy-form [hidden] { display: none !important; }
+@media (max-width: 1150px) {
+  .schedule-layout { grid-template-columns: minmax(0, 1fr); }
+  .schedule-help { position: static; }
+}
 .filter-bar { flex-wrap: wrap; }
 .filter-field { min-width: 0; flex-grow: 1; }
 .company-heading { flex-wrap: wrap; }
@@ -209,6 +236,7 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { opacity: 0
   .button { width: 100%; }
   .filter-field, .filter-wide { flex-basis: auto; }
   .form-grid { grid-template-columns: 1fr; }
+  .policy-fields { grid-template-columns: 1fr; }
   .field-wide, .full-row { grid-column: auto; }
   .form-actions { flex-direction: column-reverse; }
   .company-state-grid, .ledger-strip { grid-template-columns: 1fr; }

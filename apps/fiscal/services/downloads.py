@@ -305,6 +305,7 @@ def _schedule(
     token: Any,
     status: Any = None,
     eta: Any = None,
+    reason: str = "result_pending",
 ) -> AdvanceResult:
     assert_access(token, now=max(now, timezone.now()))
     current = DownloadPart.objects.select_for_update().get(pk=part.pk)
@@ -322,10 +323,12 @@ def _schedule(
     part.save(update_fields=["status", "next_poll_at", "error_code"])
     consolidate_request(part.request_id)
     logger.info(
-        "event=atf_part_waiting request_id=%s part_id=%s status=%s next_poll_at=%s",
+        "event=atf_part_waiting request_id=%s part_id=%s status=%s "
+        "reason=%s next_poll_at=%s",
         part.request_id,
         part.pk,
         part.status,
+        reason,
         eta,
     )
     if dispatch:
@@ -502,25 +505,57 @@ def advance_part(
                 "account:" + account, part.pk, now=current_time()
             )
             if account_token is None:
-                return _schedule(part, current_time(), dispatch, token=company_token)
+                return _schedule(
+                    part,
+                    current_time(),
+                    dispatch,
+                    token=company_token,
+                    reason="account_busy",
+                )
             part.remote_account_key = account
             part.save(update_fields=["remote_account_key"])
             client.heartbeat = heartbeat
+            if part.status == "queued":
+                scopes = [company_token.scope, account_token.scope]
+                blocking = (
+                    RemoteSubmissionBarrier.objects.filter(scope__in=scopes)
+                    .exclude(part=part)
+                    .select_related("part__request")
+                    .first()
+                )
+                if blocking:
+                    logger.info(
+                        "event=atf_submission_blocked request_id=%s part_id=%s "
+                        "blocking_request_id=%s blocking_part_id=%s "
+                        "blocking_status=%s blocking_model=%s blocking_code=%s",
+                        part.request_id,
+                        part.pk,
+                        blocking.part.request_id,
+                        blocking.part_id,
+                        blocking.part.status,
+                        blocking.part.request.document_model,
+                        blocking.part.error_code or "none",
+                    )
+                    return _schedule(
+                        part,
+                        current_time(),
+                        dispatch,
+                        token=company_token,
+                        reason="submission_pending",
+                    )
+            # A blocked query must not consume the account's mailbox interval:
+            # the existing submission needs that slot to finish and free the queue.
             retry_at = reserve_mailbox_poll(account_token, now=current_time())
             if retry_at:
                 return _schedule(
-                    part, current_time(), dispatch, eta=retry_at, token=company_token
+                    part,
+                    current_time(),
+                    dispatch,
+                    eta=retry_at,
+                    token=company_token,
+                    reason="mailbox_interval",
                 )
             if part.status == "queued":
-                scopes = [company_token.scope, account_token.scope]
-                if (
-                    RemoteSubmissionBarrier.objects.filter(scope__in=scopes)
-                    .exclude(part=part)
-                    .exists()
-                ):
-                    return _schedule(
-                        part, current_time(), dispatch, token=company_token
-                    )
                 issuer = client.lookup_issuer(
                     part.request.company.tax_identifier,
                     document_model=part.request.document_model,

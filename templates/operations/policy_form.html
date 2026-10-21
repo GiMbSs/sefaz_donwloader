@@ -1,4 +1,75 @@
 {% extends 'operations/base.html' %}
+{% load static %}
 {% block title %}Agendamento · SEFAZ Downloader{% endblock %}
 {% block page_title %}Agendamento de downloads{% endblock %}
-{% block content %}<section class="form-panel"><p class="lede">{{ company.legal_name }}</p><p class="muted">Mantenha os downloads automáticos no horário e nos dias escolhidos. O período e os formatos determinam quais arquivos serão solicitados à SEFAZ-PB.</p><form method="post" class="form-grid" novalidate>{% csrf_token %}{% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}{% for field in form %}{% include 'operations/form_field.html' with field=field %}{% endfor %}<div class="form-actions full-row"><a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a><button class="button button-primary" type="submit">Salvar agendamento</button></div></form></section>{% endblock %}
+{% block content %}
+<div class="intro-row">
+  <div><p class="lede">{{ company.legal_name }}</p><p class="muted">Defina quando executar a consulta e quais notas buscar em cada execução.</p></div>
+  <a class="table-link" href="#schedule-help">Como preencher</a>
+</div>
+<div class="schedule-layout">
+  <form method="post" class="form-panel policy-form" data-policy-form novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="form-error" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+    <fieldset class="policy-section">
+      <legend>Ativação</legend>
+      <div class="policy-fields">
+        {% include 'operations/form_field.html' with field=form.mode %}
+        <div data-policy-automatic>{% include 'operations/form_field.html' with field=form.is_active %}</div>
+      </div>
+      <p class="muted policy-manual-note" data-policy-manual>No modo manual, solicite os arquivos pela tela da empresa quando precisar.</p>
+    </fieldset>
+    <fieldset class="policy-section" data-policy-automatic>
+      <legend>Quando executar</legend>
+      <p class="muted">Escolha os dias e o horário da rotina automática.</p>
+      <div class="policy-fields">
+        {% include 'operations/form_field.html' with field=form.frequency %}
+        {% include 'operations/form_field.html' with field=form.scheduled_time %}
+        <div class="full-row" data-policy-frequency="weekly">{% include 'operations/form_field.html' with field=form.weekdays %}</div>
+        <div class="full-row" data-policy-frequency="monthly">{% include 'operations/form_field.html' with field=form.monthday %}</div>
+        <details class="policy-timezone full-row"{% if form.timezone.errors %} open{% endif %}>
+          <summary>Ajustar fuso horário</summary>
+          {% include 'operations/form_field.html' with field=form.timezone %}
+        </details>
+      </div>
+    </fieldset>
+    <fieldset class="policy-section" data-policy-automatic>
+      <legend>Quais notas consultar</legend>
+      <p class="muted">Escolha as datas das notas que serão buscadas a cada execução.</p>
+      <div class="policy-fields">
+        {% include 'operations/form_field.html' with field=form.period_strategy wide=True %}
+        <div class="full-row" data-policy-period="rolling_days">{% include 'operations/form_field.html' with field=form.rolling_days %}</div>
+      </div>
+    </fieldset>
+    <fieldset class="policy-section" data-policy-automatic>
+      <legend>Quais arquivos baixar</legend>
+      <div class="policy-fields">
+        {% include 'operations/form_field.html' with field=form.document_models %}
+        {% include 'operations/form_field.html' with field=form.formats %}
+      </div>
+    </fieldset>
+    <div class="form-actions">
+      <a class="button button-quiet" href="{% url 'company-detail' company.pk %}">Cancelar</a>
+      <button class="button button-primary" type="submit">Salvar agendamento</button>
+    </div>
+  </form>
+  <aside id="schedule-help" class="panel schedule-help" aria-labelledby="schedule-help-title">
+    <h2 id="schedule-help-title">Como preencher</h2>
+    <dl class="schedule-help-list">
+      <dt>Frequência: quando executar</dt>
+      <dd>Diária roda todos os dias. Semanal usa os dias da semana escolhidos. Mensal usa um dia do mês.</dd>
+      <dt>Período: quais notas buscar</dt>
+      <dd>É independente da frequência. Você pode executar todo dia e consultar o mês anterior inteiro.</dd>
+      <dt>O que são dias completos?</dt>
+      <dd>São dias que já terminaram. No dia 20, os últimos 7 dias completos vão do dia 13 ao dia 19.</dd>
+    </dl>
+    <div class="schedule-example">
+      <h3>Exemplo: baixar o mês anterior</h3>
+      <p>Frequência mensal, dia 5, às 02:00, com período <strong>Mês anterior inteiro</strong>.</p>
+      <p>Na execução de 05/10, a consulta será de <strong>01/09 a 30/09</strong>.</p>
+    </div>
+    <p class="muted">O horário inicia a solicitação. Os arquivos podem ficar disponíveis depois, conforme o processamento da SEFAZ-PB.</p>
+  </aside>
+</div>
+<script src="{% static 'operations/policy_form.js' %}" defer></script>
+{% endblock %}

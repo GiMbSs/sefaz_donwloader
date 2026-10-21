@@ -2,6 +2,7 @@ from typing import Any, cast
 
 from django import forms
 from django.utils import timezone
+from django.utils.datastructures import MultiValueDict
 
 from apps.fiscal.atf.profiles import DOCUMENT_CHOICES
 from apps.fiscal.models import DownloadPolicy
@@ -79,15 +80,33 @@ class DownloadPolicyForm(ModelFormBase):
         labels = {
             "mode": "Modo de operação",
             "frequency": "Frequência",
-            "scheduled_time": "Horário",
+            "scheduled_time": "Horário de execução",
             "timezone": "Fuso horário",
-            "monthday": "Dia do mês",
+            "monthday": "Dia do mês para executar",
             "period_strategy": "Período a consultar",
-            "rolling_days": "Quantidade de dias completos",
-            "is_active": "Agendamento ativo",
+            "rolling_days": "Quantos dias completos consultar",
+            "is_active": "Ativar este agendamento",
+        }
+        help_texts = {
+            "mode": "Os modos automático e híbrido seguem o agendamento abaixo.",
+            "is_active": (
+                "Desmarque para pausar as próximas execuções sem apagar a configuração."
+            ),
+            "monthday": (
+                "De 1 a 31. Se o mês não tiver esse dia, usa o último dia do mês."
+            ),
+            "period_strategy": "O período é calculado novamente a cada execução.",
+            "rolling_days": "Conta até ontem, sem incluir o dia da execução.",
+            "timezone": (
+                "Os horários seguem este fuso. O padrão da Paraíba é America/Fortaleza."
+            ),
         }
         widgets = {
-            "scheduled_time": forms.TimeInput(format="%H:%M", attrs={"type": "time"})
+            "scheduled_time": forms.TimeInput(format="%H:%M", attrs={"type": "time"}),
+            "monthday": forms.NumberInput(
+                attrs={"min": 1, "max": 31, "inputmode": "numeric"}
+            ),
+            "rolling_days": forms.NumberInput(attrs={"min": 1, "inputmode": "numeric"}),
         }
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -95,6 +114,52 @@ class DownloadPolicyForm(ModelFormBase):
         self.fields["weekdays"].initial = [str(day) for day in self.instance.weekdays]
         self.fields["formats"].initial = self.instance.formats
         self.fields["document_models"].initial = self.instance.document_models
+        cast(forms.ChoiceField, self.fields["frequency"]).choices = [
+            ("daily", "Diariamente"),
+            ("weekly", "Semanalmente"),
+            ("monthly", "Mensalmente"),
+        ]
+        cast(forms.ChoiceField, self.fields["period_strategy"]).choices = [
+            ("previous_day", "Dia anterior"),
+            ("previous_month", "Mês anterior inteiro"),
+            ("rolling_days", "Últimos dias completos"),
+        ]
+        if self.is_bound:
+            self._preserve_unused_fields()
+
+    def _preserve_unused_fields(self) -> None:
+        """Omitted conditional controls must not erase saved configuration."""
+        mode = self.data.get(self.add_prefix("mode"))
+        frequency = self.data.get(self.add_prefix("frequency"))
+        strategy = self.data.get(self.add_prefix("period_strategy"))
+        unused = []
+        if mode == "manual":
+            unused = [name for name in self.fields if name not in {"mode", "is_active"}]
+        else:
+            if frequency != "weekly":
+                unused.append("weekdays")
+            if frequency != "monthly":
+                unused.append("monthday")
+            if strategy != "rolling_days":
+                unused.append("rolling_days")
+        data = (
+            self.data.copy()
+            if isinstance(self.data, MultiValueDict)
+            else dict(self.data)
+        )
+        for name in unused:
+            value = self.initial.get(name, self.fields[name].initial)
+            key = self.add_prefix(name)
+            if isinstance(value, list):
+                if isinstance(data, MultiValueDict):
+                    data.setlist(key, [str(item) for item in value])
+                else:
+                    data[key] = [str(item) for item in value]
+            else:
+                data[key] = "" if value is None else str(value)
+        if mode == "manual":
+            data[self.add_prefix("is_active")] = "false"
+        self.data = data
 
     def clean_weekdays(self) -> Any:
         return [int(day) for day in self.cleaned_data["weekdays"]]
