@@ -3,6 +3,7 @@ from .download_models import (  # noqa: F401
     AtfAccessLease,
     DownloadArchive,
     DownloadAttempt,
+    DownloadFileDeletion,
     DownloadPart,
     DownloadPolicy,
     DownloadRequest,

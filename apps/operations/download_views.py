@@ -19,6 +19,10 @@ from apps.fiscal.models import (
     FiscalEvent,
     InvoiceDocument,
 )
+from apps.fiscal.services.download_lifecycle import (
+    cancel_download_request,
+    delete_cancelled_download_request,
+)
 from apps.fiscal.services.download_recovery import (
     abandon_uncertain_submission,
     recover_download_request,
@@ -30,7 +34,11 @@ from apps.fiscal.services.storage import FiscalStorage, FiscalStorageError
 from apps.operations.models import AuditLog
 from apps.organizations.access import accessible_companies, manageable_companies
 
-from .download_forms import DownloadRequestForm, RemoteResultResolutionForm
+from .download_forms import (
+    DownloadLifecycleForm,
+    DownloadRequestForm,
+    RemoteResultResolutionForm,
+)
 from .http import (
     AuthenticatedViewMixin as LoginRequiredMixin,
 )
@@ -77,6 +85,7 @@ class DownloadRequestCreateView(CompanyAccessMixin, View):
                 previous = (
                     DownloadRequest.objects.filter(
                         company=company,
+                        deleted_at__isnull=True,
                         active_key=active_request_key(
                             company.pk,
                             period,
@@ -120,6 +129,7 @@ class DownloadAccessMixin(LoginRequiredMixin):
         return get_object_or_404(
             DownloadRequest.objects.select_related("company"),
             pk=self.kwargs["request_id"],
+            deleted_at__isnull=True,
             company__in=accessible_companies(self.request.user),
         )
 
@@ -130,6 +140,11 @@ class DownloadRequestDetailView(DownloadAccessMixin, TemplateView):
     def get_context_data(self, **kwargs: Any) -> Any:
         context = super().get_context_data(**kwargs)
         download = self.get_download()
+        can_admin = (
+            manageable_companies(self.request.user)
+            .filter(pk=download.company_id)
+            .exists()
+        )
         context.update(
             download=download,
             parts=download.parts.prefetch_related("archives__members", "attempts"),
@@ -139,6 +154,9 @@ class DownloadRequestDetailView(DownloadAccessMixin, TemplateView):
             .exists(),
             can_recover=download.company.status == "active"
             and download.status not in {"succeeded", "empty", "cancelled"},
+            can_cancel=can_admin
+            and download.status not in {"succeeded", "empty", "cancelled"},
+            can_delete=can_admin and download.status == "cancelled",
         )
         return context
 
@@ -151,7 +169,8 @@ class DownloadRequestListView(LoginRequiredMixin, ListView):
     def get_queryset(self) -> Any:
         queryset = (
             DownloadRequest.objects.filter(
-                company__in=accessible_companies(self.request.user)
+                company__in=accessible_companies(self.request.user),
+                deleted_at__isnull=True,
             )
             .select_related("company", "requested_by")
             .prefetch_related("parts")
@@ -175,6 +194,83 @@ class DownloadRequestListView(LoginRequiredMixin, ListView):
         context["query"] = self.request.GET.get("q", "")
         context["company"] = self.company
         return context
+
+
+class DownloadRequestAdminActionView(DownloadAccessMixin, View):
+    template_name = "operations/download_request_action.html"
+    action = "cancel"
+
+    def get_download(self) -> Any:
+        return get_object_or_404(
+            DownloadRequest.objects.select_related("company"),
+            pk=self.kwargs["request_id"],
+            deleted_at__isnull=True,
+            company__in=manageable_companies(self.request.user),
+        )
+
+    def get(self, request: Any, request_id: Any) -> Any:
+        return render(
+            request,
+            self.template_name,
+            {
+                "download": self.get_download(),
+                "form": DownloadLifecycleForm(),
+                "action": self.action,
+            },
+        )
+
+    def post(self, request: Any, request_id: Any) -> Any:
+        download = self.get_download()
+        form = DownloadLifecycleForm(request.POST)
+        if form.is_valid():
+            try:
+                if self.action == "cancel":
+                    cancel_download_request(
+                        download.pk,
+                        actor_id=request.user.pk,
+                        note=form.cleaned_data["note"],
+                        acknowledge_remote_uncertainty=form.cleaned_data["confirm"],
+                    )
+                else:
+                    delete_cancelled_download_request(
+                        download.pk,
+                        actor_id=request.user.pk,
+                        note=form.cleaned_data["note"],
+                    )
+            except ValidationError as error:
+                form.add_error(None, error)
+            else:
+                if self.action == "delete":
+                    messages.success(
+                        request,
+                        "Pedido excluído. A remoção dos arquivos será processada "
+                        "em segundo plano; itens compartilhados serão preservados.",
+                    )
+                    return redirect(
+                        "company-download-list", company_id=download.company_id
+                    )
+                messages.success(
+                    request, "Pedido cancelado. O acompanhamento local foi encerrado."
+                )
+                return redirect("download-request-detail", request_id=download.pk)
+        return render(
+            request,
+            self.template_name,
+            {
+                "download": download,
+                "form": form,
+                "action": self.action,
+            },
+            status=400,
+        )
+
+
+class DownloadRequestCancelView(DownloadRequestAdminActionView):
+    action = "cancel"
+
+
+class DownloadRequestDeleteView(DownloadRequestAdminActionView):
+    action = "delete"
 
 
 class DownloadRequestRecoverView(DownloadAccessMixin, View):
@@ -247,6 +343,8 @@ class RemoteResultResolutionView(LoginRequiredMixin, View):
             pk=self.kwargs["part_id"],
             request__company__in=manageable_companies(self.request.user),
             request__company__status="active",
+            request__deleted_at__isnull=True,
+            request__status__in=["queued", "running", "waiting", "failed", "partial"],
         )
 
     def get(self, request: Any, part_id: Any) -> Any:

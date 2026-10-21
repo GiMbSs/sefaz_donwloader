@@ -84,6 +84,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
                 "active_company_count": active_company_ids.count(),
                 "waiting_request_count": DownloadRequest.objects.filter(
                     company_id__in=active_company_ids,
+                    deleted_at__isnull=True,
                     status="waiting",
                 ).count(),
                 "expiring_certificates": DigitalCertificate.objects.filter(
@@ -92,7 +93,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
                     not_valid_after__lte=expiry_limit,
                 ).select_related("company"),
                 "recent_requests": DownloadRequest.objects.filter(
-                    company_id__in=active_company_ids
+                    company_id__in=active_company_ids, deleted_at__isnull=True
                 )
                 .select_related("company", "requested_by")
                 .order_by("-created_at")[:8],
@@ -221,9 +222,11 @@ class CompanyDetailView(CompanyAccessMixin, TemplateView):
                 "latest_certificate_upload": company.certificate_uploads.order_by(
                     "-created_at"
                 ).first(),
-                "download_requests": company.download_requests.select_related(
-                    "requested_by"
-                ).order_by("-created_at")[:12],
+                "download_requests": company.download_requests.filter(
+                    deleted_at__isnull=True
+                )
+                .select_related("requested_by")
+                .order_by("-created_at")[:12],
                 "documents": company.invoices.order_by("-last_received_at")[:12],
                 "can_manage": can_manage,
             }

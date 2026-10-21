@@ -28,8 +28,10 @@ from apps.fiscal.models import DownloadArchive, DownloadPart
 from apps.organizations.models import ClientCompany
 from apps.organizations.validators import normalize_tax_identifier
 
+from .leases import assert_part_active
 from .schemas import NFE_NAMESPACE, FiscalSchemaError, parse_fiscal_xml
 from .storage import FiscalStorage, download_storage_directory
+from .storage_coordination import lock_fiscal_storage
 
 
 @dataclass(frozen=True)
@@ -417,11 +419,13 @@ def _publish_original(source: Any, target: Any, expected_digest: Any) -> None:
 def persist_archive(
     part_id: Any, ref: Any, download: Any, validation: Any
 ) -> DownloadArchive:
+    lock_fiscal_storage()
     part = (
         DownloadPart.objects.select_for_update(of=("self",))
         .select_related("request__company__office")
         .get(pk=part_id)
     )
+    assert_part_active(part)
     if validation.archive_sha256 != download.sha256:
         raise AtfArtifactError("atf_validation_identity")
     existing = DownloadArchive.objects.filter(

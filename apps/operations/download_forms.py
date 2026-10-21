@@ -165,6 +165,17 @@ class DownloadPolicyForm(ModelFormBase):
         return [int(day) for day in self.cleaned_data["weekdays"]]
 
 
+class DownloadLifecycleForm(forms.Form):
+    note = forms.CharField(
+        label="Motivo",
+        max_length=2000,
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+    confirm = forms.BooleanField(
+        label="Confirmo esta ação e entendo as consequências descritas acima.",
+    )
+
+
 class RemoteResultResolutionForm(forms.Form):
     candidate = forms.ChoiceField(label="Resultado a conferir", required=False)
     note = forms.CharField(

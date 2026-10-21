@@ -37,3 +37,28 @@ def legacy_schema(transactional_db):
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(executor.loader.graph.leaf_nodes())
+
+
+@pytest.fixture
+def lifecycle_admin(download_actor):
+    from apps.organizations.models import OfficeMembership
+
+    OfficeMembership.objects.filter(user=download_actor).update(role="admin")
+    return download_actor
+
+
+@pytest.fixture
+def lifecycle_request(download_company, lifecycle_admin):
+    from datetime import date
+
+    from apps.fiscal.atf.types import Period
+    from apps.fiscal.services.downloads import request_download
+
+    return request_download(
+        company_id=download_company.pk,
+        period=Period(date(2024, 10, 1), date(2024, 10, 18)),
+        formats=("xml", "txt"),
+        actor_id=lifecycle_admin.pk,
+        trigger="manual",
+        dispatch=False,
+    )

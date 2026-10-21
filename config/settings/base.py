@@ -213,6 +213,10 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULE = {
+    "purge-deleted-download-files": {
+        "task": "apps.fiscal.tasks.purge_download_files",
+        "schedule": 60.0,
+    },
     "queue-due-atf-downloads": {
         "task": "apps.fiscal.tasks.schedule_due_downloads",
         "schedule": 60.0,

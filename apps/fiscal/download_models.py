@@ -33,6 +33,7 @@ PART_STATES = (
     "succeeded",
     "empty",
     "failed",
+    "cancelled",
 )
 
 
@@ -163,6 +164,7 @@ class DownloadRequest(AtfModel):
     requested_on = models.DateField(default=timezone.localdate)
     finished_at = models.DateTimeField(null=True, blank=True)
     result_detail = models.TextField(blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         constraints = [
@@ -173,6 +175,23 @@ class DownloadRequest(AtfModel):
             )
         ]
         ordering = ("-created_at",)
+
+
+class DownloadFileDeletion(AtfModel):
+    request = models.ForeignKey(
+        DownloadRequest, on_delete=models.PROTECT, related_name="file_deletions"
+    )
+    path = models.CharField(max_length=1024)
+    completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    outcome = models.CharField(max_length=24, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("request", "path"), name="unique_atf_file_deletion"
+            )
+        ]
 
 
 class DownloadPart(AtfModel):

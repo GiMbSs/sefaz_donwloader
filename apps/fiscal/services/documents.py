@@ -13,6 +13,7 @@ from apps.fiscal.atf.types import DownloadedArchive, Period
 from apps.fiscal.models import (
     ArchiveMember,
     DownloadArchive,
+    DownloadPart,
     FiscalEvent,
     InvoiceDocument,
     InvoiceXmlVersion,
@@ -20,6 +21,7 @@ from apps.fiscal.models import (
 
 from .artifacts import _member_name, validate_archive
 from .storage import FiscalStorage
+from .storage_coordination import lock_fiscal_storage
 
 
 @dataclass(frozen=True)
@@ -67,8 +69,12 @@ def index_archive(archive_id: Any, *, heartbeat: Any = None) -> IndexResult:
                 or Path(archive.path).parent
                 / (member.sha256 + (".txt" if member.kind == "txt" else ".xml"))
             )
-            storage._write(relative, data)
             with transaction.atomic():
+                lock_fiscal_storage()
+                DownloadPart.objects.select_for_update().get(pk=part.pk)
+                if not DownloadArchive.objects.filter(pk=archive.pk).exists():
+                    break
+                storage._write(relative, data)
                 version, event = None, None
                 meta = member.metadata
                 if member.kind == "invoice":

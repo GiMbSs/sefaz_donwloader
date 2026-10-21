@@ -22,6 +22,7 @@ from apps.organizations.access import accessible_companies, manageable_companies
 from apps.organizations.models import ClientCompany
 
 from .downloads import consolidate_request, enqueue_part
+from .leases import assert_part_active
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ def recover_download_request(
     )
     # Match request_download's company lock so a repeat cannot be created
     # between the active-key check and reactivation of this request.
-    ClientCompany.objects.select_for_update().get(pk=company_id)
+    ClientCompany.objects.select_for_update(no_key=True).get(pk=company_id)
     # Workers lock a part before consolidating its request. Lock every part
     # first, in a stable order, so recovery never holds the request while
     # waiting for a worker's part lock. Re-read states after obtaining locks.
@@ -139,6 +140,7 @@ def abandon_uncertain_submission(
         .select_related("request")
         .get(pk=part_id)
     )
+    assert_part_active(part)
     user = get_user_model().objects.get(pk=actor_id)
     if (
         not user.is_active

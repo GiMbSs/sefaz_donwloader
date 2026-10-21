@@ -46,6 +46,7 @@ from .artifacts import persist_archive, validate_archive
 from .documents import index_archive
 from .leases import (
     assert_access,
+    assert_part_active,
     begin_submission,
     bind_remote_result,
     claim_access,
@@ -57,7 +58,7 @@ from .leases import (
 from .periods import active_request_key
 
 logger = logging.getLogger(__name__)
-TERMINAL_PARTS = {"succeeded", "empty", "failed"}
+TERMINAL_PARTS = {"succeeded", "empty", "failed", "cancelled"}
 TERMINAL_REQUESTS = {"succeeded", "partial", "empty", "failed", "cancelled"}
 
 
@@ -65,6 +66,13 @@ TERMINAL_REQUESTS = {"succeeded", "partial", "empty", "failed", "cancelled"}
 class AdvanceResult:
     status: str
     next_eta: datetime | None = None
+
+
+@transaction.atomic
+def _save_part(part: Any, *, update_fields: Any) -> None:
+    current = DownloadPart.objects.select_for_update().get(pk=part.pk)
+    assert_part_active(current)
+    part.save(update_fields=update_fields)
 
 
 def _alert(part: Any, code: Any) -> None:
@@ -190,7 +198,9 @@ def request_download(
     if active:
         return active
     previous = (
-        DownloadRequest.objects.filter(active_key=key).order_by("-created_at").first()
+        DownloadRequest.objects.filter(active_key=key, deleted_at__isnull=True)
+        .order_by("-created_at")
+        .first()
     )
     if previous and trigger == "manual" and repeat_of != previous.pk:
         raise ValidationError(
@@ -320,7 +330,7 @@ def _schedule(
     if status:
         part.status = status
     part.next_poll_at = eta
-    part.save(update_fields=["status", "next_poll_at", "error_code"])
+    _save_part(part, update_fields=["status", "next_poll_at", "error_code"])
     consolidate_request(part.request_id)
     logger.info(
         "event=atf_part_waiting request_id=%s part_id=%s status=%s "
@@ -340,6 +350,7 @@ def _finish(part: Any, token: Any, status: Any, now: Any) -> AdvanceResult:
     with transaction.atomic():
         assert_access(token, now=max(now, timezone.now()))
         current = DownloadPart.objects.select_for_update().get(pk=part.pk)
+        assert_part_active(current)
         current.status = status
         current.error_code = ""
         current.next_poll_at = None
@@ -376,7 +387,7 @@ def _defer_scheduled_retry(
         part.deadline_at = now + timedelta(
             seconds=delay + result_wait_seconds(part.request.document_model)
         )
-    part.save(update_fields=["retry_count", "retry_cycle", "deadline_at"])
+    _save_part(part, update_fields=["retry_count", "retry_cycle", "deadline_at"])
     return _schedule(
         part, now, dispatch, eta=now + timedelta(seconds=delay), token=token
     )
@@ -393,7 +404,8 @@ def _deliver(
     ]
     if not matched or not any(message.attachments for message in matched):
         raise AtfArtifactError("atf_missing_attachment")
-    DownloadPart.objects.filter(pk=part.pk).update(status="downloading")
+    part.status = "downloading"
+    _save_part(part, update_fields=["status"])
     for message in matched:
         # Reopen immediately before reading each attachment. The index is session-local.
         for ref in message.attachments:
@@ -429,6 +441,20 @@ def _deliver(
 
 def advance_part(
     part_id: Any, *, client_factory: Any = None, now: Any = None, dispatch: Any = True
+) -> AdvanceResult:
+    try:
+        return _advance_part(
+            part_id, client_factory=client_factory, now=now, dispatch=dispatch
+        )
+    except AtfPermissionError as error:
+        # Cancellation may be noticed inside failure handling or a heartbeat.
+        if error.args != ("atf_lease_lost",):
+            raise
+        return AdvanceResult(DownloadPart.objects.get(pk=part_id).status)
+
+
+def _advance_part(
+    part_id: Any, *, client_factory: Any, now: Any, dispatch: Any
 ) -> AdvanceResult:
     now = now or timezone.now()
     default_client = client_factory is None
@@ -472,7 +498,7 @@ def advance_part(
         if part.request.company.status != "active":
             part.status = "failed"
             part.error_code = "atf_company_inactive"
-            part.save(update_fields=["status", "error_code"])
+            _save_part(part, update_fields=["status", "error_code"])
             consolidate_request(part.request_id)
             return AdvanceResult("failed")
         if (
@@ -485,7 +511,7 @@ def advance_part(
         ):
             part.error_code = "atf_schedule_inactive"
             part.status = "failed"
-            part.save(update_fields=["status", "error_code"])
+            _save_part(part, update_fields=["status", "error_code"])
             consolidate_request(part.request_id)
             return AdvanceResult("failed")
         context = (
@@ -513,7 +539,7 @@ def advance_part(
                     reason="account_busy",
                 )
             part.remote_account_key = account
-            part.save(update_fields=["remote_account_key"])
+            _save_part(part, update_fields=["remote_account_key"])
             client.heartbeat = heartbeat
             if part.status == "queued":
                 scopes = [company_token.scope, account_token.scope]
@@ -608,7 +634,7 @@ def advance_part(
                 if deferred:
                     return deferred
                 part.status = "failed"
-                part.save(update_fields=["status", "error_code"])
+                _save_part(part, update_fields=["status", "error_code"])
                 _alert(part, "atf_wait_timeout")
                 consolidate_request(part.request_id)
                 return AdvanceResult("failed")
@@ -652,7 +678,7 @@ def advance_part(
                 sum(len(message.attachments) for message in messages),
             )
             part.candidates = list(result.candidates)
-            part.save(update_fields=["candidates", "error_code"])
+            _save_part(part, update_fields=["candidates", "error_code"])
             if result.outcome == "matched":
                 bind_remote_result(
                     part.pk, account, result.candidates[0], actor_id=None
@@ -691,7 +717,7 @@ def advance_part(
                     "ambiguous" if result.outcome == "ambiguous" else "waiting"
                 )
             part.poll_count += 1
-            part.save(update_fields=["poll_count"])
+            _save_part(part, update_fields=["poll_count"])
             if result_status == "ambiguous":
                 part.error_code = "atf_result_ambiguous"
                 _alert(part, "atf_result_ambiguous")
@@ -704,14 +730,16 @@ def advance_part(
             )
     except AtfPermissionError as error:
         if error.args == ("atf_lease_lost",):
-            return AdvanceResult(part.status)
+            return AdvanceResult(DownloadPart.objects.get(pk=part.pk).status)
+        assert_part_active(DownloadPart.objects.get(pk=part.pk))
         _record_failure(part, attempt, error, elapsed_start)
         _alert(part, part.error_code)
         part.status = "failed"
-        part.save(update_fields=["status", "error_code"])
+        _save_part(part, update_fields=["status", "error_code"])
         consolidate_request(part.request_id)
         return AdvanceResult("failed")
     except AtfError as error:
+        assert_part_active(DownloadPart.objects.get(pk=part.pk))
         if account_token:
             with transaction.atomic():
                 assert_access(account_token, now=current_time())
@@ -733,7 +761,7 @@ def advance_part(
             retry_after = min(max(0, getattr(error, "retry_after_seconds", 0)), 604800)
             if part.retry_count < 3:
                 part.retry_count += 1
-                part.save(update_fields=["retry_count"])
+                _save_part(part, update_fields=["retry_count"])
                 delay = max(60 * 2 ** (part.retry_count - 1), retry_after)
                 return _schedule(
                     part,
@@ -752,10 +780,11 @@ def advance_part(
             if deferred:
                 return deferred
         part.status = "failed"
-        part.save(update_fields=["status", "error_code"])
+        _save_part(part, update_fields=["status", "error_code"])
         consolidate_request(part.request_id)
         return AdvanceResult("failed")
     except Exception as error:
+        assert_part_active(DownloadPart.objects.get(pk=part.pk))
         with transaction.atomic():
             assert_access(company_token, now=current_time())
         part.refresh_from_db()
@@ -768,13 +797,15 @@ def advance_part(
             attempt.submission_certainty = "uncertain"
             attempt.save(update_fields=["submission_certainty"])
         part.status = "failed"
-        part.save(update_fields=["status", "error_code"])
+        _save_part(part, update_fields=["status", "error_code"])
         _alert(part, part.error_code)
         consolidate_request(part.request_id)
         return AdvanceResult("failed")
     finally:
         if attempt and attempt.finished_at is None:
-            DownloadAttempt.objects.filter(pk=attempt.pk).update(
+            DownloadAttempt.objects.filter(
+                pk=attempt.pk, finished_at__isnull=True
+            ).update(
                 finished_at=current_time(),
                 outcome=part.status,
                 error_code=part.error_code,
@@ -787,6 +818,8 @@ def advance_part(
             and part.status in TERMINAL_PARTS
             and not RemoteSubmissionBarrier.objects.filter(part=part).exists()
         ):
-            sibling = part.request.parts.filter(status="queued").first()
+            sibling = part.request.parts.filter(
+                status="queued", request__status__in=["queued", "running", "waiting"]
+            ).first()
             if sibling:
                 transaction.on_commit(lambda: enqueue_part(sibling.pk))

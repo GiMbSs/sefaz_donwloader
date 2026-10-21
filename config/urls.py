@@ -90,6 +90,16 @@ urlpatterns = [
         name="download-request-recover",
     ),
     path(
+        "downloads/<uuid:request_id>/cancelar/",
+        download_views.DownloadRequestCancelView.as_view(),
+        name="download-request-cancel",
+    ),
+    path(
+        "downloads/<uuid:request_id>/excluir/",
+        download_views.DownloadRequestDeleteView.as_view(),
+        name="download-request-delete",
+    ),
+    path(
         "downloads/arquivos/<uuid:archive_id>/",
         download_views.DownloadArchiveView.as_view(),
         name="download-archive",

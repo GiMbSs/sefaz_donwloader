@@ -18,6 +18,8 @@ O upload do A1 confere CNPJ e validade antes de substituir o certificado ativo. 
 
 Cada empresa possui a tela **Pedidos de download**, acessível por **Ver todos os pedidos** no cadastro. Ela lista todas as solicitações, incluindo agendadas, manuais, falhas e pendentes, com período, formatos, usuário manual, situação e próxima tentativa. O detalhe permite baixar ZIPs, conferir resultados ambíguos e retomar acompanhamento. Datas inicial e final são obrigatórias em pedidos manuais.
 
+Administradores também podem cancelar o pedido inteiro e excluir pedidos cancelados. A exclusão remove os arquivos e as notas exclusivos daquele pedido, preservando referências compartilhadas e auditoria. A limpeza física é persistida e retomada pelo worker/scheduler em caso de falha. Consulte [cancelamento e exclusão administrativa](ADMIN-PEDIDOS.md).
+
 O agendamento mantém modo, frequência, horário, fuso, dias da semana/dia do mês e ativação existentes. O período passa a ser dia anterior, mês anterior ou últimos dias completos; não é inferido a partir de NSU. Novas empresas começam no modo manual. Dias mensais inexistentes usam o último dia do mês.
 
 Novos arquivos ficam em `<CNPJ do escritório>/<CNPJ da empresa>/NFe|NFCe/XML|TXT/AAAA-MM-DD/`. Exemplo: `11222333000181/00000000000191/NFCe/XML/2026-10-20/`. A data é a da solicitação original no fuso da política (ou da instalação), mantida em retomadas, mesmo que o arquivo fique disponível em outro dia. Cada data ocupa uma única pasta; não são criadas subpastas de pedido, parte ou membros.

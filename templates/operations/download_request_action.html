@@ -1,0 +1,31 @@
+{% extends 'operations/base.html' %}
+{% block title %}{% if action == 'delete' %}Excluir pedido{% else %}Cancelar pedido{% endif %} · SEFAZ Downloader{% endblock %}
+{% block page_title %}{% if action == 'delete' %}Excluir pedido cancelado{% else %}Cancelar pedido{% endif %}{% endblock %}
+{% block content %}
+<section class="form-panel danger-panel">
+  <p class="lede">{{ download.company.legal_name }}</p>
+  <p>{{ download.get_document_model_display }} · {{ download.formats|join:', '|upper }} · {{ download.start_date|date:'d/m/Y' }} a {{ download.end_date|date:'d/m/Y' }}</p>
+  <p class="quiet">Solicitado em {{ download.created_at|date:'d/m/Y H:i' }}</p>
+  <aside class="risk-note risk-note-danger">
+    {% if action == 'delete' %}
+      <strong>O pedido e seus arquivos exclusivos serão excluídos.</strong>
+      <span>ZIPs, XMLs, TXTs e notas vinculados somente a este pedido serão removidos. Arquivos e notas também usados por outros pedidos serão preservados. A remoção dos arquivos ocorre em segundo plano, com novas tentativas se o armazenamento estiver indisponível. O registro administrativo da ação será mantido.</span>
+    {% else %}
+      <strong>O acompanhamento deste pedido será encerrado.</strong>
+      <span>Todas as partes pendentes serão canceladas, incluindo XML e TXT. Os arquivos já baixados serão preservados. Uma consulta já enviada pode continuar sendo processada na SEFAZ-PB; esta ação encerra o acompanhamento no sistema.</span>
+    {% endif %}
+  </aside>
+  {% if action == 'cancel' and download.trigger == 'scheduled' %}
+    <p>O cancelamento vale para este pedido. Para interromper os próximos agendamentos, ajuste o <a href="{% url 'company-policy' download.company_id %}">agendamento da empresa</a>.</p>
+  {% endif %}
+  <form method="post" class="form-grid" novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="form-error full-row">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}{% include 'operations/form_field.html' with field=field wide=True %}{% endfor %}
+    <div class="form-actions full-row">
+      <a class="button button-quiet" href="{% url 'download-request-detail' download.pk %}">Voltar ao pedido</a>
+      <button type="submit" class="button button-danger">{% if action == 'delete' %}Excluir pedido{% else %}Confirmar cancelamento{% endif %}</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

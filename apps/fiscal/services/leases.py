@@ -21,6 +21,7 @@ from apps.fiscal.atf.types import SubmissionEvidence
 from apps.fiscal.models import (
     AtfAccessLease,
     DownloadPart,
+    DownloadRequest,
     RemoteResultBinding,
     RemoteSubmissionBarrier,
 )
@@ -69,7 +70,20 @@ def assert_access(token: LeaseToken, *, now: datetime) -> AtfAccessLease:
     )
     if lease is None:
         raise AtfPermissionError("atf_lease_lost")
+    if lease.part_id:
+        part = DownloadPart.objects.get(pk=lease.part_id)
+        assert_part_active(part)
     return lease
+
+
+def assert_part_active(part: DownloadPart) -> None:
+    if (
+        part.status == "cancelled"
+        or DownloadRequest.objects.filter(
+            pk=part.request_id, status="cancelled"
+        ).exists()
+    ):
+        raise AtfPermissionError("atf_lease_lost")
 
 
 @transaction.atomic
@@ -111,6 +125,7 @@ def begin_submission(
         .select_related("request__company")
         .get(pk=part_id)
     )
+    assert_part_active(part)
     scopes = sorted(
         [
             company_scope(part.request.company.tax_identifier),
@@ -157,6 +172,7 @@ def bind_remote_result(
         .select_related("request")
         .get(pk=part_id)
     )
+    assert_part_active(part)
     if part.remote_account_key != account_key or parent_id not in part.candidates:
         raise AtfPermissionError()
     if actor_id is not None:
