@@ -326,6 +326,19 @@ def validate_archive(
                 seen.add(name.casefold())
                 if entry.is_dir():
                     continue
+                # The real NFC-e XML export includes this empty report even
+                # when every XML was found. Preserve it in the original ZIP;
+                # it is not an invoice or an independently requested TXT.
+                if (
+                    document_model == "65"
+                    and format == "xml"
+                    and name == "CHAVES_NAO_ENCONTRADAS.txt"
+                    and entry.file_size == 0
+                ):
+                    with archive.open(entry) as companion:
+                        if companion.read(1):
+                            raise AtfArtifactError("atf_archive_format_mismatch")
+                    continue
                 if Path(name).suffix.lower() != "." + format:
                     raise AtfArtifactError("atf_archive_format_mismatch")
                 cap = (

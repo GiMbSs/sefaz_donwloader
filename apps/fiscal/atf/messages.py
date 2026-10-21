@@ -88,6 +88,7 @@ def parse_message(content: bytes, message_id: str, parent_id: str) -> ParsedMess
             "nenhuma nf-e encontrada",
             "nenhuma nfc-e encontrada",
             "não foram encontradas notas fiscais",
+            "nenhum registro satisfaz a pesquisa",
         ]
     ):
         outcome = "empty"
@@ -107,7 +108,10 @@ def parse_message(content: bytes, message_id: str, parent_id: str) -> ParsedMess
             "aguardando processamento",
         )
     )
-    ref = MessageRef(message_id, parent_id, sender_code, "", bool(attachments))
+    sent = re.search(r"Enviada:\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})", text, re.I)
+    ref = MessageRef(
+        message_id, parent_id, sender_code, sent[1] if sent else "", bool(attachments)
+    )
     return ParsedMessage(
         ref,
         period,

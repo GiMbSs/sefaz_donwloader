@@ -47,6 +47,41 @@ def test_xml_archive_distinguishes_note_and_recipient_event(tmp_path, download_c
     assert result.members[0].metadata["number"] == "1"
 
 
+@pytest.mark.parametrize(
+    "name,body,allowed",
+    [
+        ("CHAVES_NAO_ENCONTRADAS.txt", b"", True),
+        ("CHAVES_NAO_ENCONTRADAS.txt", b"missing XML", False),
+        ("outro.txt", b"", False),
+    ],
+)
+def test_nfce_xml_export_allows_only_known_empty_companion(
+    tmp_path, download_company, name, body, allowed
+):
+    from apps.fiscal.atf.errors import AtfArtifactError
+    from apps.fiscal.services.artifacts import validate_archive
+
+    key = KEY[:20] + "65" + KEY[22:]
+    invoice = INVOICE.replace(KEY.encode(), key.encode()).replace(
+        b"<mod>55", b"<mod>65"
+    )
+    download = archive_file(tmp_path, [("nota.xml", invoice), (name, body)])
+    arguments = dict(
+        company_id=download_company.pk,
+        period=Period(date(2024, 10, 1), date(2024, 10, 18)),
+        format="xml",
+        document_model="65",
+    )
+    if allowed:
+        result = validate_archive(download, **arguments)
+        assert [member.name for member in result.members] == ["nota.xml"]
+        with zipfile.ZipFile(download.staging_path) as archive:
+            assert archive.read(name) == body
+    else:
+        with pytest.raises(AtfArtifactError):
+            validate_archive(download, **arguments)
+
+
 @pytest.mark.parametrize("number", [b"2", b"0", b"abc", b"1000000000"])
 def test_invoice_number_must_match_access_key(tmp_path, download_company, number):
     from apps.fiscal.atf.errors import AtfArtifactError

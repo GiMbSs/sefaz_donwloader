@@ -18,6 +18,7 @@ from django.conf import settings
 from .errors import (
     AtfArtifactError,
     AtfAuthenticationError,
+    AtfCaptchaRequired,
     AtfIdentityMismatch,
     AtfPermissionError,
     AtfPortalChanged,
@@ -247,7 +248,13 @@ class AtfPbClient:
         response = self._request(
             "POST", profile.query_path, data=fields, submission=True
         )
-        text = visible_text(portal_document(response.content)).lower()
+        tree = portal_document(response.content)
+        source = "\n".join(tree.xpath("//script[not(@src)]/text()"))
+        if "SEGf_EmitirMensagem" in source and re.search(
+            r"\b(?:cod|codigo)\s*=\s*['\"]3291['\"]", source
+        ):
+            raise AtfCaptchaRequired()
+        text = visible_text(tree).lower()
         if "resultado será enviado para sua caixa de mensagens" not in text:
             raise AtfSubmissionUncertain()
         return SubmissionReceipt(True)

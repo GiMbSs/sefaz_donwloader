@@ -27,6 +27,10 @@ class AtfPermissionError(AtfError):
     safe_code = "atf_permission_denied"
 
 
+class AtfCaptchaRequired(AtfPermissionError):
+    safe_code = "atf_captcha_required"
+
+
 class AtfPortalChanged(AtfError):
     safe_code = "atf_portal_changed"
 

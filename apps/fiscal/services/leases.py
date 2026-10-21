@@ -184,13 +184,16 @@ def bind_remote_result(
             .exists()
         ):
             raise PermissionDenied()
-    binding, _ = RemoteResultBinding.objects.get_or_create(
+    binding, _ = RemoteResultBinding.objects.select_for_update().get_or_create(
         remote_account_key=account_key,
         parent_message_id=parent_id,
         defaults={"part": part, "confirmed_by_id": actor_id},
     )
     if binding.part_id != part_id:
         raise AtfAmbiguousResult()
+    if actor_id is not None and binding.confirmed_by_id is None:
+        binding.confirmed_by_id = actor_id
+        binding.save(update_fields=["confirmed_by"])
     part.remote_parent_id = parent_id
     part.save(update_fields=["remote_parent_id"])
     AuditLog.objects.create(

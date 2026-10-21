@@ -20,6 +20,7 @@ from apps.fiscal.atf.correlation import reconcile_result
 from apps.fiscal.atf.diagnostics import diagnostic, diagnostic_code, error_message
 from apps.fiscal.atf.errors import (
     AtfArtifactError,
+    AtfCaptchaRequired,
     AtfError,
     AtfIdentityMismatch,
     AtfPermissionError,
@@ -35,6 +36,7 @@ from apps.fiscal.models import (
     DownloadPart,
     DownloadPolicy,
     DownloadRequest,
+    RemoteResultBinding,
     RemoteSubmissionBarrier,
 )
 from apps.operations.models import AuditLog
@@ -304,6 +306,37 @@ def _read_group(client: Any, group: Any, sender_code: str) -> Any:
         for ref in refs
         if ref.sender_code == sender_code
     )
+
+
+def _unfiltered_submission_groups(part: Any, roots: Any) -> tuple[str, ...]:
+    """Find review hints, never proof of ownership, in the POST time window."""
+    attempt = (
+        part.attempts.filter(operation="submit", finished_at__isnull=False)
+        .order_by("-started_at")
+        .first()
+    )
+    if not part.submitted_at or attempt is None:
+        return ()
+    start = part.submitted_at - timedelta(seconds=5)
+    end = attempt.finished_at + timedelta(seconds=5)
+    sender = document_profile(part.request.document_model).sender_code
+    groups = []
+    for root in roots:
+        if (
+            root.id in part.baseline_ids
+            or root.sender_code != sender
+            or root.children_count < 2
+        ):
+            continue
+        try:
+            sent = datetime.strptime(root.sent_at_raw, "%d/%m/%Y %H:%M:%S").replace(
+                tzinfo=ZoneInfo("America/Fortaleza")
+            )
+        except ValueError:
+            continue
+        if start <= sent <= end:
+            groups.append(root.id)
+    return tuple(groups)
 
 
 @transaction.atomic
@@ -617,6 +650,7 @@ def _advance_part(
                     attempt.outcome = "accepted"
                     attempt.finished_at = current_time()
                     attempt.save()
+                part.error_code = ""
                 return _schedule(
                     part,
                     current_time(),
@@ -657,7 +691,19 @@ def _advance_part(
                 for message in _read_group(client, group, sender_code)
             )
             evidence = SubmissionEvidence(
-                part.pk, attempt.pk, tuple(part.baseline_ids), part.submitted_at or now
+                part.pk,
+                attempt.pk,
+                tuple(part.baseline_ids),
+                part.submitted_at or now,
+                unfiltered_group_ids=_unfiltered_submission_groups(part, relevant),
+                confirmed_group_ids=tuple(
+                    RemoteResultBinding.objects.filter(
+                        part=part,
+                        remote_account_key=account,
+                        parent_message_id=part.remote_parent_id,
+                        confirmed_by__isnull=False,
+                    ).values_list("parent_message_id", flat=True)
+                ),
             )
             result = reconcile_result(
                 evidence,
@@ -670,12 +716,13 @@ def _advance_part(
             part.error_code = ""
             logger.info(
                 "event=atf_poll_result request_id=%s part_id=%s outcome=%s "
-                "candidates=%s attachments=%s",
+                "candidates=%s attachments=%s basis=%s",
                 part.request_id,
                 part.pk,
                 result.outcome,
                 len(result.candidates),
                 sum(len(message.attachments) for message in messages),
+                result.basis,
             )
             part.candidates = list(result.candidates)
             _save_part(part, update_fields=["candidates", "error_code"])
@@ -704,7 +751,10 @@ def _advance_part(
                     and message.filters.get("format") == part.format
                     and message.period == result.confirmed_period
                 ]
-                if proven:
+                if proven or result.basis == "manual_binding":
+                    bind_remote_result(
+                        part.pk, account, result.candidates[0], actor_id=None
+                    )
                     return _finish(
                         part,
                         account_token,
@@ -719,8 +769,16 @@ def _advance_part(
             part.poll_count += 1
             _save_part(part, update_fields=["poll_count"])
             if result_status == "ambiguous":
-                part.error_code = "atf_result_ambiguous"
-                _alert(part, "atf_result_ambiguous")
+                part.error_code = (
+                    "atf_empty_requires_review"
+                    if result.outcome == "empty"
+                    or (
+                        result.basis == "unfiltered_candidate"
+                        and any(message.outcome == "empty" for message in messages)
+                    )
+                    else "atf_result_ambiguous"
+                )
+                _alert(part, part.error_code)
             return _schedule(
                 part,
                 current_time(),
@@ -732,11 +790,25 @@ def _advance_part(
         if error.args == ("atf_lease_lost",):
             return AdvanceResult(DownloadPart.objects.get(pk=part.pk).status)
         assert_part_active(DownloadPart.objects.get(pk=part.pk))
-        _record_failure(part, attempt, error, elapsed_start)
+        with transaction.atomic():
+            assert_access(company_token, now=current_time())
+            current = DownloadPart.objects.select_for_update().get(pk=part.pk)
+            assert_part_active(current)
+            if isinstance(error, AtfCaptchaRequired):
+                RemoteSubmissionBarrier.objects.filter(part=part).delete()
+                part.submitted_at = None
+                part.deadline_at = None
+                part.next_poll_at = None
+                _save_part(
+                    part, update_fields=["submitted_at", "deadline_at", "next_poll_at"]
+                )
+                attempt.submission_certainty = "rejected"
+                attempt.save(update_fields=["submission_certainty"])
+            _record_failure(part, attempt, error, elapsed_start)
+            part.status = "failed"
+            _save_part(part, update_fields=["status", "error_code"])
+            consolidate_request(part.request_id)
         _alert(part, part.error_code)
-        part.status = "failed"
-        _save_part(part, update_fields=["status", "error_code"])
-        consolidate_request(part.request_id)
         return AdvanceResult("failed")
     except AtfError as error:
         assert_part_active(DownloadPart.objects.get(pk=part.pk))

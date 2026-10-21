@@ -12,6 +12,12 @@ class FailureDiagnostic:
 
 
 DIAGNOSTICS = {
+    "atf_captcha_required": FailureDiagnostic(
+        "A SEFAZ-PB exige validação de CAPTCHA para esta consulta.",
+        "A solicitação não foi aceita pelo fluxo automático. Conclua a consulta "
+        "no portal oficial com a validação exigida; retomar sem essa validação "
+        "não libera o envio. Não há arquivo sendo aguardado por esta tentativa.",
+    ),
     "atf_xml_issuer_mismatch": FailureDiagnostic(
         "O CNPJ do emitente no XML não corresponde à empresa solicitada.",
         "O arquivo foi rejeitado. Confira a empresa e o resultado selecionado.",
@@ -127,8 +133,14 @@ DIAGNOSTICS = {
         "O sistema verifica a caixa de mensagens antes de prosseguir. Não crie "
         "outro pedido para substituir este envio incerto.",
     ),
+    "atf_empty_requires_review": FailureDiagnostic(
+        "A SEFAZ-PB informou ausência de notas, mas omitiu os filtros da consulta.",
+        "O administrador deve usar Conferir resultado para confirmar a mensagem "
+        "deste pedido. A quantidade de mensagens e o horário não comprovam "
+        "sozinhos o período e o formato. Nenhuma consulta será reenviada.",
+    ),
     "atf_result_ambiguous": FailureDiagnostic(
-        "Há mais de um resultado possível para esta solicitação.",
+        "Não foi possível vincular o resultado com segurança a esta solicitação.",
         "O administrador deve conferir os resultados disponíveis neste pedido.",
     ),
     "atf_portal_changed": FailureDiagnostic(

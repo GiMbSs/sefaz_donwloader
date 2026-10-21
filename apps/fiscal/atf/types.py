@@ -75,6 +75,8 @@ class SubmissionEvidence:
     attempt_id: UUID
     baseline_ids: tuple[str, ...]
     submitted_at: datetime
+    unfiltered_group_ids: tuple[str, ...] = ()
+    confirmed_group_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,9 @@ class CorrelationResult:
     outcome: Literal["matched", "pending", "ambiguous", "empty", "remote_failed"]
     candidates: tuple[str, ...] = ()
     confirmed_period: Period | None = None
+    basis: Literal["message_filters", "manual_binding", "unfiltered_candidate"] = (
+        "message_filters"
+    )
 
 
 @dataclass(frozen=True)

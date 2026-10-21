@@ -13,6 +13,12 @@ def portal_document(content: bytes) -> Any:
     try:
         declared = re.search(rb'charset\s*=\s*["\']?([a-zA-Z0-9_-]+)', content[:4096])
         encoding = declared[1].decode("ascii") if declared else "utf-8"
+        if encoding.lower().replace("-", "") == "utf8":
+            try:
+                content.decode("utf-8")
+            except UnicodeDecodeError:
+                # The live portal sometimes declares UTF-8 but sends CP1252.
+                encoding = "windows-1252"
         if not declared:
             try:
                 content.decode("utf-8")

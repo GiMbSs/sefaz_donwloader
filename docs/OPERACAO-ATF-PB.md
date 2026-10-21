@@ -18,6 +18,14 @@ O upload do A1 confere CNPJ e validade antes de substituir o certificado ativo. 
 
 Cada empresa possui a tela **Pedidos de download**, acessível por **Ver todos os pedidos** no cadastro. Ela lista todas as solicitações, incluindo agendadas, manuais, falhas e pendentes, com período, formatos, usuário manual, situação e próxima tentativa. O detalhe permite baixar ZIPs, conferir resultados ambíguos e retomar acompanhamento. Datas inicial e final são obrigatórias em pedidos manuais.
 
+Na validação real de 21/10/2026, a resposta “Nenhum registro satisfaz a pesquisa”
+veio sem filtros. Nessa situação, **Conferir resultado** permite ao administrador
+confirmar o vínculo antes do encerramento sem notas. Quantidade de mensagens e
+horário são indícios, não comprovação de período/formato. A rejeição remota de
+CAPTCHA (`3291`) aparece como `atf_captcha_required`, sem aguardar um anexo que
+não foi solicitado. As limitações verificadas de NFC-e, TXT direto e conciliação
+estão no [relatório do teste real](VALIDACAO-REAL-ATF-2026-10-21.md).
+
 Administradores também podem cancelar o pedido inteiro e excluir pedidos cancelados. A exclusão remove os arquivos e as notas exclusivos daquele pedido, preservando referências compartilhadas e auditoria. A limpeza física é persistida e retomada pelo worker/scheduler em caso de falha. Consulte [cancelamento e exclusão administrativa](ADMIN-PEDIDOS.md).
 
 O agendamento mantém modo, frequência, horário, fuso, dias da semana/dia do mês e ativação existentes. O período passa a ser dia anterior, mês anterior ou últimos dias completos; não é inferido a partir de NSU. Novas empresas começam no modo manual. Dias mensais inexistentes usam o último dia do mês.

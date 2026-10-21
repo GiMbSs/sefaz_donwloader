@@ -82,7 +82,11 @@ def recover_download_request(
             part.submitted_at is not None
             or RemoteSubmissionBarrier.objects.filter(part=part).exists()
         )
-        if len(part.candidates) > 1 and not part.remote_parent_id:
+        if (
+            part.candidates
+            and not part.remote_parent_id
+            and (part.status == "ambiguous" or len(part.candidates) > 1)
+        ):
             review = True
             continue
         if uncertain:
