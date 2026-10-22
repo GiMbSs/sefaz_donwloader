@@ -12,6 +12,21 @@ class FailureDiagnostic:
 
 
 DIAGNOSTICS = {
+    "atf_nfce_browser_unavailable": FailureDiagnostic(
+        "Não foi possível iniciar o navegador necessário ao envio de NFC-e.",
+        "O responsável pela instalação deve instalar o Chromium do Playwright "
+        "ou reconstruir a imagem do worker. Esta etapa não enviou uma nova consulta.",
+    ),
+    "atf_nfce_browser_timeout": FailureDiagnostic(
+        "O formulário de NFC-e não respondeu durante a preparação do envio.",
+        "A tentativa será retomada conforme os intervalos do pedido. "
+        "Nenhuma confirmação de envio foi registrada nesta preparação.",
+    ),
+    "atf_nfce_browser_contract": FailureDiagnostic(
+        "O formulário oficial de NFC-e não apresentou os campos esperados.",
+        "O responsável pela integração deve conferir os campos do portal "
+        "antes de retomar o pedido.",
+    ),
     "atf_captcha_required": FailureDiagnostic(
         "A SEFAZ-PB exige validação de CAPTCHA para esta consulta.",
         "A solicitação não foi aceita pelo fluxo automático. Conclua a consulta "

@@ -159,6 +159,9 @@ ATF_PB_ENABLED = os.environ.get("ATF_PB_ENABLED", "False").lower() in {
 ATF_PB_BASE_URL = "https://www4.sefaz.pb.gov.br"
 ATF_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("ATF_CONNECT_TIMEOUT_SECONDS", "10"))
 ATF_READ_TIMEOUT_SECONDS = float(os.environ.get("ATF_READ_TIMEOUT_SECONDS", "120"))
+ATF_NFCE_BROWSER_TIMEOUT_SECONDS = float(
+    os.environ.get("ATF_NFCE_BROWSER_TIMEOUT_SECONDS", "120")
+)
 ATF_TLS_CA_BUNDLE = os.environ.get("ATF_TLS_CA_BUNDLE", "")
 ATF_POLL_INTERVAL_SECONDS = int(os.environ.get("ATF_POLL_INTERVAL_SECONDS", "60"))
 ATF_ACCESS_LEASE_SECONDS = int(os.environ.get("ATF_ACCESS_LEASE_SECONDS", "300"))

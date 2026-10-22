@@ -20,6 +20,10 @@ A integração nacional SOAP, o controle de NSU e a seleção de ambiente fiscal
 
 Python 3.13, Django 6, Celery/Redis, PostgreSQL 17, requests, cryptography e lxml. Interface em português do Brasil. A web não recebe as chaves privadas do cofre; o worker autentica, consulta e grava arquivos privados.
 
+O envio de NFC-e usa Playwright/Chromium com o A1 e o botão oficial do portal.
+NF-e mantém HTTP. A imagem Docker instala o navegador; detalhes de atualização
+e retomada estão em [Envio NFC-e pelo navegador](docs/ENVIO-NFCE-NAVEGADOR.md).
+
 ## Instalação local com Docker
 
 Copiar `.env.example` para `.env`, definir credenciais próprias e os diretórios absolutos `NOTES_HOST_DIR`, `CERTIFICATES_HOST_DIR` e `CERTIFICATE_PUBLIC_HOST_DIR`. Certificados e senhas ficam fora do repositório. Não substituir chaves existentes do cofre.

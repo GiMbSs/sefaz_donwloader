@@ -5,11 +5,12 @@ import os
 import re
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -18,7 +19,6 @@ from django.conf import settings
 from .errors import (
     AtfArtifactError,
     AtfAuthenticationError,
-    AtfCaptchaRequired,
     AtfIdentityMismatch,
     AtfPermissionError,
     AtfPortalChanged,
@@ -30,12 +30,31 @@ from .filenames import attachment_filename
 from .forms import form_fields, parse_issuer, portal_document, visible_text
 from .messages import parse_message, parse_message_page
 from .profiles import document_profile
-from .types import DownloadedArchive, RemoteIdentity, SubmissionReceipt
+from .submission_response import submission_receipt
+from .types import (
+    DownloadedArchive,
+    IssuerIdentity,
+    Period,
+    RemoteIdentity,
+    SubmissionReceipt,
+)
 
 BASE = "https://www4.sefaz.pb.gov.br"
 LOGIN = "/atf/seg/SEGf_LoginSERVirtual.jsp"
 QUERY = "/atf/fis/FISf_ConsultarNFeXml2.do"
 MAILBOX = "/atf/seg/SEGf_MinhasMensagens.do"
+
+
+class NfceQuery(Protocol):
+    def lookup_issuer(self, cnpj: str) -> IssuerIdentity: ...
+
+    def prepare_query(
+        self, issuer: IssuerIdentity, period: Period, format: str
+    ) -> None: ...
+
+    def submit_query(
+        self, issuer: IssuerIdentity, period: Period, format: str
+    ) -> SubmissionReceipt: ...
 
 
 class AtfPbClient:
@@ -46,6 +65,7 @@ class AtfPbClient:
         staging_root: Path,
         *,
         account_key_hint: str | None = None,
+        nfce_query_factory: Callable[[], NfceQuery] | None = None,
     ) -> None:
         if account_key_hint and not re.fullmatch(r"[a-f0-9]{64}", account_key_hint):
             raise AtfPermissionError("atf_invalid_account_namespace")
@@ -62,6 +82,8 @@ class AtfPbClient:
         self.current_message = None
         self.heartbeat = None
         self.last_heartbeat = 0.0
+        self.nfce_query_factory = nfce_query_factory
+        self.nfce_query: NfceQuery | None = None
 
     def keep_alive(self, *, force: Any = False) -> None:
         current = time.monotonic()
@@ -212,6 +234,11 @@ class AtfPbClient:
         profile = document_profile(document_model)
         if cnpj != self.company_cnpj:
             raise AtfIdentityMismatch()
+        if document_model == "65" and self.nfce_query_factory is not None:
+            if self.nfce_query is None:
+                self.nfce_query = self.nfce_query_factory()
+            self.query_document_model = document_model
+            return self.nfce_query.lookup_issuer(cnpj)
         query = self._request("GET", profile.query_path + "?idSERVirtual=S")
         self.query_fields = form_fields(query.content, "frmConsultar")
         self.query_document_model = document_model
@@ -230,12 +257,30 @@ class AtfPbClient:
         result = self._request("POST", "/atf/componentes/CodDescLstBS.jsp", data=fields)
         return parse_issuer(result.content, cnpj)
 
+    def prepare_query(
+        self,
+        issuer: IssuerIdentity,
+        period: Period,
+        format: str,
+        *,
+        document_model: str = "55",
+    ) -> None:
+        if document_model == "65" and self.nfce_query_factory is not None:
+            if self.nfce_query is None or self.query_document_model != "65":
+                raise AtfPortalChanged("atf_missing_query_form")
+            self.nfce_query.prepare_query(issuer, period, format)
+
     def submit_query(
         self, issuer: Any, period: Any, format: Any, *, document_model: str = "55"
     ) -> SubmissionReceipt:
         profile = document_profile(document_model)
         if issuer.cnpj != self.company_cnpj or format not in {"xml", "txt"}:
             raise AtfIdentityMismatch()
+        if document_model == "65" and self.nfce_query_factory is not None:
+            if self.nfce_query is None or self.query_document_model != "65":
+                raise AtfPortalChanged("atf_missing_query_form")
+            self.keep_alive(force=True)
+            return self.nfce_query.submit_query(issuer, period, format)
         if not self.query_fields or self.query_document_model != document_model:
             raise AtfPortalChanged("atf_missing_query_form")
         fields = {**self.query_fields, **issuer.form_values}
@@ -248,16 +293,7 @@ class AtfPbClient:
         response = self._request(
             "POST", profile.query_path, data=fields, submission=True
         )
-        tree = portal_document(response.content)
-        source = "\n".join(tree.xpath("//script[not(@src)]/text()"))
-        if "SEGf_EmitirMensagem" in source and re.search(
-            r"\b(?:cod|codigo)\s*=\s*['\"]3291['\"]", source
-        ):
-            raise AtfCaptchaRequired()
-        text = visible_text(tree).lower()
-        if "resultado será enviado para sua caixa de mensagens" not in text:
-            raise AtfSubmissionUncertain()
-        return SubmissionReceipt(True)
+        return submission_receipt(response.content)
 
     def list_messages(self, cursor: Any = None, parent_id: Any = None) -> Any:
         target = cursor or MAILBOX
@@ -369,11 +405,25 @@ def open_atf_client(
         if base != BASE:
             raise AtfPermissionError("atf_base_url_not_approved")
         session.mount(BASE + "/", MutualTlsAdapter(context))
+
+        def nfce_query_factory() -> NfceQuery:
+            try:
+                from .nfce_browser import open_nfce_query
+            except ModuleNotFoundError as error:
+                if error.name and error.name.startswith("playwright"):
+                    raise AtfPermissionError("atf_nfce_browser_unavailable") from None
+                raise
+
+            return stack.enter_context(
+                open_nfce_query(certificate.pk, heartbeat=heartbeat)
+            )
+
         client = AtfPbClient(
             session,
             company.tax_identifier,
             settings.FISCAL_NOTES_ROOT / ".staging",
             account_key_hint=account_key_hint,
+            nfce_query_factory=nfce_query_factory,
         )
         client.heartbeat = heartbeat
         try:

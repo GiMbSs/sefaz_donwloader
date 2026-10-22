@@ -9,6 +9,7 @@ import ssl
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -63,8 +64,14 @@ def _protect_windows_directory(path: Path) -> None:
         raise AtfAuthenticationError("atf_private_tls_directory_unavailable") from None
 
 
-@contextmanager
-def client_tls_context(certificate_id: int) -> Any:
+@dataclass(frozen=True, repr=False)
+class VerifiedA1:
+    pfx: bytes
+    passphrase: str
+    company_cnpj: str
+
+
+def load_verified_a1(certificate_id: int) -> VerifiedA1:
     stored = DigitalCertificate.objects.select_related("company").get(
         pk=certificate_id, status=DigitalCertificate.Status.ACTIVE
     )
@@ -88,6 +95,19 @@ def client_tls_context(certificate_id: int) -> Any:
         raise AtfIdentityMismatch()
     if not certificate.not_valid_before_utc <= now <= certificate.not_valid_after_utc:
         raise AtfAuthenticationError("atf_certificate_expired")
+    return VerifiedA1(payload, password, stored.company.tax_identifier)
+
+
+@contextmanager
+def client_tls_context(certificate_id: int) -> Any:
+    material = load_verified_a1(certificate_id)
+    password = material.passphrase
+    key, certificate, chain = pkcs12.load_key_and_certificates(
+        material.pfx, password.encode("utf-8")
+    )
+    del material
+    if key is None or certificate is None:
+        raise AtfAuthenticationError()
     ca_bundle = getattr(settings, "ATF_TLS_CA_BUNDLE", "") or requests.certs.where()
     context = ssl.create_default_context(cafile=ca_bundle)
     public = certificate.public_bytes(serialization.Encoding.PEM)

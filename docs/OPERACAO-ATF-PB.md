@@ -26,6 +26,10 @@ CAPTCHA (`3291`) aparece como `atf_captcha_required`, sem aguardar um anexo que
 não foi solicitado. As limitações verificadas de NFC-e, TXT direto e conciliação
 estão no [relatório do teste real](VALIDACAO-REAL-ATF-2026-10-21.md).
 
+O envio NFC-e agora usa o formulário oficial em Chromium com A1; NF-e mantém o
+transporte HTTP. Para instalar o navegador, atualizar imagens e retomar pedidos
+rejeitados, seguir [Envio NFC-e pelo navegador](ENVIO-NFCE-NAVEGADOR.md).
+
 Administradores também podem cancelar o pedido inteiro e excluir pedidos cancelados. A exclusão remove os arquivos e as notas exclusivos daquele pedido, preservando referências compartilhadas e auditoria. A limpeza física é persistida e retomada pelo worker/scheduler em caso de falha. Consulte [cancelamento e exclusão administrativa](ADMIN-PEDIDOS.md).
 
 O agendamento mantém modo, frequência, horário, fuso, dias da semana/dia do mês e ativação existentes. O período passa a ser dia anterior, mês anterior ou últimos dias completos; não é inferido a partir de NSU. Novas empresas começam no modo manual. Dias mensais inexistentes usam o último dia do mês.

@@ -619,6 +619,14 @@ def _advance_part(
                     part.request.company.tax_identifier,
                     document_model=part.request.document_model,
                 )
+                prepare_query = getattr(client, "prepare_query", None)
+                if part.request.document_model == "65" and prepare_query is not None:
+                    prepare_query(
+                        issuer,
+                        Period(part.start_date, part.end_date),
+                        part.format,
+                        document_model="65",
+                    )
                 baseline = tuple(
                     ref.id
                     for ref in _all_messages(client)
